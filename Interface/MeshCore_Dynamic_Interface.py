@@ -216,7 +216,6 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
 import RNS
 from RNS.Interfaces.Interface import Interface
 import asyncio
-import base64
 import hashlib
 import struct
 import queue
@@ -253,7 +252,7 @@ class _PacketHandler:
         for idx, chunk in enumerate(raw_chunks):
             # Header layout packed big-endian: B (1B index), I (4B packet ID), B (1B total fragments)
             header = struct.pack(">BIB", idx & 0xFF, pkt_id & 0xFFFFFFFF, total & 0xFF)
-            encoded = base64.urlsafe_b64encode(header + chunk).rstrip(b"=").decode()
+            encoded = z85_encode(header + chunk)
             self.fragments.append(self.MSG_PREFIX + encoded)
 
     def __len__(self):
@@ -421,7 +420,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # additive on top of that and defaults to off -- enable it only if
         # you're seeing path resolution fail even within that natural burst.
         self.announce_retransmit_extra = int(cfg.get("announce_retransmit_extra", 2))
-        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 1))
+        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 0))
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
         self.ordinary_data_retransmit_extra = int(cfg.get("ordinary_data_retransmit_extra", 0))
@@ -1070,14 +1069,10 @@ class MeshCore_Dynamic_Interface(Interface):
         if sender and sender == self._own_node_name:
             return
 
-        b64 = text[len(self.MSG_PREFIX):].strip()
-        b64 += "=" * (-len(b64) % 4)
+        z85_text = text[len(self.MSG_PREFIX):].strip()
         try:
-            raw = base64.urlsafe_b64decode(b64)
+            raw = z85_decode(z85_text)
         except Exception:
-            return
-
-        if len(raw) < self.HEADER_SIZE:
             return
 
         # Header unpacked big-endian matching structural change (1B index, 4B packet ID, 1B total fragments)
@@ -1572,6 +1567,65 @@ class MeshCore_Dynamic_Interface(Interface):
 
     def __str__(self):
         return f"MeshCore_Dynamic_Interface[{self.name}]"
+
+# ------------------------------------------------------------------------
+# z85 encode
+# ------------------------------------------------------------------------
+
+_Z85_ALPHABET = (
+    "0123456789abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ".-:+=^!/*?&<>()[]{}@%$#"
+)
+_Z85_DECODE = {c: i for i, c in enumerate(_Z85_ALPHABET)}
+
+
+def z85_encode(data: bytes) -> str:
+    """Encode arbitrary-length bytes as a Z85 string (85-char safe alphabet,
+    no comma/quote/backslash). Self-describing padding: first output char
+    is a digit 0-3 giving how many zero bytes were appended before encoding."""
+    pad = (-len(data)) % 4
+    padded = data + b"\x00" * pad
+
+    out = []
+    for i in range(0, len(padded), 4):
+        chunk = padded[i:i + 4]
+        value = int.from_bytes(chunk, "big")
+        chars = []
+        for _ in range(5):
+            chars.append(_Z85_ALPHABET[value % 85])
+            value //= 85
+        out.append("".join(reversed(chars)))
+
+    return str(pad) + "".join(out)
+
+
+def z85_decode(text: str) -> bytes:
+    """Inverse of z85_encode. Raises ValueError on malformed input."""
+    if not text or text[0] not in "0123":
+        raise ValueError("missing/invalid Z85 pad-count prefix")
+    pad = int(text[0])
+    body = text[1:]
+
+    if len(body) % 5 != 0:
+        raise ValueError(f"Z85 body length {len(body)} not a multiple of 5")
+
+    out = bytearray()
+    for i in range(0, len(body), 5):
+        group = body[i:i + 5]
+        value = 0
+        for ch in group:
+            try:
+                value = value * 85 + _Z85_DECODE[ch]
+            except KeyError:
+                raise ValueError(f"invalid Z85 character: {ch!r}")
+        if value > 0xFFFFFFFF:
+            raise ValueError("Z85 group overflows 32 bits")
+        out.extend(value.to_bytes(4, "big"))
+
+    if pad:
+        out = out[:-pad]
+    return bytes(out)
 
 
 interface_class = MeshCore_Dynamic_Interface
