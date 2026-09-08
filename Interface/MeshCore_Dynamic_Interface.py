@@ -421,7 +421,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # additive on top of that and defaults to off -- enable it only if
         # you're seeing path resolution fail even within that natural burst.
         self.announce_retransmit_extra = int(cfg.get("announce_retransmit_extra", 2))
-        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 0))
+        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 2))
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
 
@@ -506,6 +506,7 @@ class MeshCore_Dynamic_Interface(Interface):
         self._load_meshcore_or_panic()
 
         self._loop = asyncio.new_event_loop()
+        assert self._loop is not None
         self._loop_thread = threading.Thread(
             target=self._run_loop, daemon=True,
             name=f"MCDyn-loop-{self.name}"
@@ -564,6 +565,13 @@ class MeshCore_Dynamic_Interface(Interface):
             self.owner.panic()
 
     def _run_loop(self):
+        if self._loop is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: Loop crashed: no event loop",
+                RNS.LOG_ERROR
+            )
+            return
+
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_forever()
@@ -597,9 +605,25 @@ class MeshCore_Dynamic_Interface(Interface):
             )
             return
 
+        if self._mc is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Driver init returned no MeshCore instance.",
+                RNS.LOG_ERROR
+            )
+            return
+
+        if ET is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"MeshCore EventType is unavailable.",
+                RNS.LOG_ERROR
+            )
+            return
+
         try:
             result = await self._mc.commands.send_appstart()
-            if result.type == ET.SELF_INFO:
+            if ET and result.type == ET.SELF_INFO:
                 self._own_node_name = result.payload.get("name", "")
                 self._own_mc_key    = result.payload.get("public_key", "")
                 cap_label = (
@@ -652,12 +676,16 @@ class MeshCore_Dynamic_Interface(Interface):
                         f"MeshCore_Dynamic_Interface [{self.name}]: "
                         f"Initial contact fetch failed: {exc}", RNS.LOG_DEBUG
                     )
+        
+        def _channel_msg_callback(e) -> None:
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self._on_channel_msg(e), self._loop
+                )
 
         self._mc.subscribe(
             ET.CHANNEL_MSG_RECV,
-            lambda e: asyncio.run_coroutine_threadsafe(
-                self._on_channel_msg(e), self._loop
-            )
+            _channel_msg_callback
         )
 
         _direct_recv_et = None
@@ -665,11 +693,15 @@ class MeshCore_Dynamic_Interface(Interface):
                       "MSG_RECV", "PRIV_MSG_RECV"):
             _direct_recv_et = getattr(ET, _name, None)
             if _direct_recv_et is not None:
+                def _direct_msg_callback(e) -> None:
+                    if self._loop is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            self._on_direct_msg(e), self._loop
+                        )
+
                 self._mc.subscribe(
                     _direct_recv_et,
-                    lambda e: asyncio.run_coroutine_threadsafe(
-                        self._on_direct_msg(e), self._loop
-                    )
+                    _direct_msg_callback
                 )
                 break
 
@@ -679,11 +711,15 @@ class MeshCore_Dynamic_Interface(Interface):
         for _name in ("ACK", "MSG_ACKED", "MESSAGE_ACKED", "CHAN_ACK"):
             _ack_et = getattr(ET, _name, None)
             if _ack_et is not None:
+                def _ack_callback(e) -> None:
+                    if self._loop is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            self._on_msg_ack(e), self._loop
+                        )
+
                 self._mc.subscribe(
                     _ack_et,
-                    lambda e: asyncio.run_coroutine_threadsafe(
-                        self._on_msg_ack(e), self._loop
-                    )
+                    _ack_callback
                 )
                 break
 
@@ -705,6 +741,8 @@ class MeshCore_Dynamic_Interface(Interface):
 
     async def _bind_discovery_loop(self):
         await asyncio.sleep(5)  # Let connection settle
+        if self._mc is None:
+            return
         retries = 0
 
         while True:
@@ -747,7 +785,7 @@ class MeshCore_Dynamic_Interface(Interface):
     async def _delayed_bind_response(self):
         delay = random.uniform(self.BIND_BACKOFF_MIN, self.BIND_BACKOFF_MAX)
         await asyncio.sleep(delay)
-        if not self.online or not self._own_mc_key:
+        if not self.online or not self._own_mc_key or self._mc is None:
             return
         try:
             await self._mc.commands.send_chan_msg(
@@ -782,7 +820,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 return
             self._last_unbound_req[sender] = now
 
-        if not self.online or not self._own_mc_key:
+        if not self.online or not self._own_mc_key or self._mc is None:
             return
         try:
             await self._mc.commands.send_chan_msg(
@@ -1338,6 +1376,7 @@ class MeshCore_Dynamic_Interface(Interface):
             )
             route = [("channel", None)]
         else:
+            assert target_key is not None
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"Routing -> DIRECT via peer key {target_key[:12]}...",
@@ -1366,7 +1405,7 @@ class MeshCore_Dynamic_Interface(Interface):
             elif ptype == self._RNS_PTYPE_DATA and dest_type == self._RNS_DTYPE_PLAIN:
                 retransmit_extra = self.path_req_retransmit_extra
 
-        if retransmit_extra > 0:
+        if retransmit_extra > 0 and self._loop is not None:
             asyncio.run_coroutine_threadsafe(
                 self._delayed_retransmits(handler.fragments, route, retransmit_extra),
                 self._loop
@@ -1399,7 +1438,11 @@ class MeshCore_Dynamic_Interface(Interface):
         using the event loop executor pool to preserve pure async interface execution.
         """
         while True:
-            if not self.online or self._mc is None:
+            if not self.online or self._mc is None or self._loop is None:
+                await asyncio.sleep(0.5)
+                continue
+
+            if self._EventType is None:
                 await asyncio.sleep(0.5)
                 continue
 
