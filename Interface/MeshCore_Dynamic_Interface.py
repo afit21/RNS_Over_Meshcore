@@ -424,6 +424,8 @@ class MeshCore_Dynamic_Interface(Interface):
         self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 1))
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
+        self.ordinary_data_retransmit_extra = int(cfg.get("ordinary_data_retransmit_extra", 0))
+        
 
         # --- Routing capability --------------------------------------------
         self.can_route = (
@@ -1398,7 +1400,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # request (see _path_response_pending above) -- so they're already
         # covered by the announce_retransmit_extra branch below with no
         # separate handling needed.
-        retransmit_extra = 0
+        retransmit_extra = self.ordinary_data_retransmit_extra
         if broadcast:
             if ptype == self._RNS_PTYPE_ANNOUNCE:
                 retransmit_extra = self.announce_retransmit_extra
