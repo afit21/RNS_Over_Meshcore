@@ -350,6 +350,7 @@ class MeshCore_Dynamic_Interface(Interface):
         self.radio_bw   = float(cfg.get("bw",   0))
         self.radio_sf   = int(cfg.get("sf",     0))
         self.radio_cr   = int(cfg.get("cr",     0))
+        self.contact_refresh_interval = float(cfg.get("contact_refresh_interval", 120.0))
 
         # --- Protocol tuning -----------------------------------------------
         self.payload_size = int(cfg.get("payload_size", 64))
@@ -729,6 +730,7 @@ class MeshCore_Dynamic_Interface(Interface):
         asyncio.create_task(self._cleanup_loop())
         asyncio.create_task(self._bind_discovery_loop())
         asyncio.create_task(self._async_outgoing_worker())
+        asyncio.create_task(self._contact_refresh_loop())
 
         self.online = True
         self._setup_done.set()
@@ -740,6 +742,29 @@ class MeshCore_Dynamic_Interface(Interface):
     def _own_capability(self) -> str:
         return self.CAPABILITY_ROUTER if self.can_route else self.CAPABILITY_EDGE
 
+    async def _contact_refresh_loop(self):
+        """
+        Periodically re-fetch MeshCore's contact list so cached out_path_len
+        values don't go stale between the one-time ensure_contacts() call in
+        _async_setup and whenever auto_update_contacts happens to fire on its
+        own. Without this, a contact that resolves a path to a peer behind a
+        repeater sometime after startup can stay looking like out_path_len=-1
+        in our local cache indefinitely, causing DIRECT sends to fail and
+        silently fall back to CHANNEL forever (see _async_outgoing_worker).
+        """
+        while True:
+            await asyncio.sleep(self.contact_refresh_interval)
+            if not self.online or self._mc is None:
+                continue
+            try:
+                await self._mc.ensure_contacts()
+            except Exception as exc:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Periodic contact refresh failed: {exc}",
+                    RNS.LOG_DEBUG
+                )
+    
     async def _bind_discovery_loop(self):
         await asyncio.sleep(5)  # Let connection settle
         if self._mc is None:
