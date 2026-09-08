@@ -421,7 +421,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # additive on top of that and defaults to off -- enable it only if
         # you're seeing path resolution fail even within that natural burst.
         self.announce_retransmit_extra = int(cfg.get("announce_retransmit_extra", 2))
-        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 2))
+        self.path_req_retransmit_extra = int(cfg.get("path_req_retransmit_extra", 1))
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
 
