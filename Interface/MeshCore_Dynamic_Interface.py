@@ -1497,7 +1497,7 @@ class MeshCore_Dynamic_Interface(Interface):
                                 if self._loop is not None:
                                     RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
                                     asyncio.run_coroutine_threadsafe(
-                                        self._mc.commands.send_path_discovery_sync(target_key), 
+                                        self._mc.commands.send_path_discovery_sync(contact), 
                                         self._loop
                                     )
                                     
