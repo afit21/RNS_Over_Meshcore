@@ -1413,8 +1413,9 @@ class MeshCore_Dynamic_Interface(Interface):
                         contact = self._mc.get_contact_by_key_prefix(target_key)
                         opl = contact.get("out_path_len", -1) if contact else -1
                         if opl == -1:
-                            target_key = None
                             channel_reason = f"Peer bound but no resolved MeshCore path yet (out_path_len=-1) for {target_key}"
+                            target_key = None
+                            
 
         if channel_reason:
             RNS.log(
