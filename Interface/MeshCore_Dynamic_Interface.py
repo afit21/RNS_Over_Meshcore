@@ -869,7 +869,7 @@ class MeshCore_Dynamic_Interface(Interface):
     # -------------------------------------------------------------------------
     # Maintenance
     # -------------------------------------------------------------------------
-
+    
     async def _cleanup_loop(self):
         while True:
             await asyncio.sleep(30)  
@@ -1407,6 +1407,14 @@ class MeshCore_Dynamic_Interface(Interface):
                     target_key = self._rns_to_mc_map.get(next_hop_token)
                 if not target_key:
                     channel_reason = f"No direct route bound for RNS token {next_hop_token.hex()[:8]}"
+                else:
+                    # Check MeshCore's contact cache to see if it has a resolved path to the peer yet. If not, fall back to channel for now. (saves time and avoids a failed direct send attempt that would have to be retried later)
+                    if self._mc:
+                        contact = self._mc.get_contact_by_key_prefix(target_key)
+                        opl = contact.get("out_path_len", -1) if contact else -1
+                        if opl == -1:
+                            target_key = None
+                            channel_reason = f"Peer bound but no resolved MeshCore path yet (out_path_len=-1) for {target_key}"
 
         if channel_reason:
             RNS.log(
