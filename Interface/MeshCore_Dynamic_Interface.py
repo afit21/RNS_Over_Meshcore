@@ -329,6 +329,9 @@ class MeshCore_Dynamic_Interface(Interface):
         self.name  = configuration.get("name", "MeshCore Dynamic")
         cfg        = configuration
 
+        # --- Interface stats
+        self.stats = InterfaceStats()
+
         # --- Transport selection -------------------------------------------
         self.transport = cfg.get("transport", "serial").lower()
 
@@ -1299,6 +1302,9 @@ class MeshCore_Dynamic_Interface(Interface):
         hdr_byte  = data[0] if data else 0
         ptype     = hdr_byte & 0x03         
         dest_type = (hdr_byte >> 2) & 0x03  
+        perf_start = time.monotonic()
+
+        
 
         # Per-destination outgoing announce rate limiter. Bypassed for
         # announces that are answering a path request we recently saw come
@@ -1371,8 +1377,20 @@ class MeshCore_Dynamic_Interface(Interface):
             self._pkt_id = (self._pkt_id + 1) & 0xFFFFFFFF  # 32-bit bound integer tracking
 
         handler   = _PacketHandler(data, pkt_id, self.payload_size)
+        
         broadcast = self._is_broadcast_packet(data)
-
+        
+        #Log Fragmentation Performance Metrics
+        RNS.log(
+            f"[PERF {pkt_id}] OUT "
+            f"size={len(data)} "
+            f"ptype={ptype} "
+            f"broadcast={broadcast}",
+            RNS.LOG_INFO
+        )
+        
+        
+        
         target_key = None
         channel_reason = ""
 
@@ -1410,7 +1428,20 @@ class MeshCore_Dynamic_Interface(Interface):
             for mode, target in route:
                 try:
                     # Thread-safe blocking put handles backpressure cleanly
-                    self._outqueue.put((mode, target, frag_str), block=True, timeout=None)
+                    queued_at = time.monotonic()
+
+                    self._outqueue.put(
+                        (mode, target, frag_str, queued_at, pkt_id),
+                        block=True,
+                        timeout=None
+                    )
+
+                    RNS.log(
+                        f"[PERF {pkt_id}] QUEUE "
+                        f"depth={self._outqueue.qsize()}",
+                        RNS.LOG_INFO
+                    )
+                    
                 except Exception:
                     pass
 
@@ -1470,10 +1501,24 @@ class MeshCore_Dynamic_Interface(Interface):
 
             # Safe non-blocking cross-thread extraction via run_in_executor
             item = await self._loop.run_in_executor(None, self._outqueue.get)
-            mode, target, frag_str = item
+            
+            try:
+                mode, target, frag_str, queued_at, pkt_id = item
+                queue_wait = time.monotonic() - queued_at
+                
+                #Log queue wait time
+                RNS.log(
+                    f"[PERF {pkt_id}] DEQUEUE "
+                    f"queue_wait={queue_wait:.3f}s "
+                    f"depth={self._outqueue.qsize()}",
+                    RNS.LOG_INFO
+                )
+            except Exception:
+                mode, target, frag_str = item
 
             try:
                 if mode == "direct":
+                    self.stats.increment_direct_attempts() #Log direct send attempt
                     result = await self._mc.commands.send_msg(target, frag_str)
                     if result is None or result.type != self._EventType.MSG_SENT:
                         reason = (
@@ -1534,7 +1579,17 @@ class MeshCore_Dynamic_Interface(Interface):
                                 f"(expected_ack={exp_ack_hex}, "
                                 f"firmware suggested {suggested_ms}ms)"
                             )
+                        else:
+                            #Ack received -- log success and continue to next fragment
+                            self.stats.increment_direct_success() #Log direct send success
+                            RNS.log(
+                                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                                f"Direct send to peer key {target[:12] if target else '?'}... "
+                                f"ACK received (expected_ack={exp_ack_hex}).",
+                                RNS.LOG_INFO
+                            )
                 else:
+                    self.stats.increment_channel_attempts() #Log channel send attempt
                     await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
             except Exception as exc:
                 if mode == "direct":
@@ -1563,6 +1618,7 @@ class MeshCore_Dynamic_Interface(Interface):
                     )
                     try:
                         # Fallback to channel if targeted routing exceptions happen mid-transit
+                        self.stats.increment_channel_attempts() #Log channel send attempt
                         self._outqueue.put_nowait(("channel", None, frag_str))
                     except queue.Full:
                         pass
@@ -1598,9 +1654,7 @@ class MeshCore_Dynamic_Interface(Interface):
 # ------------------------------------------------------------------------
 
 _Z85_ALPHABET = (
-    "0123456789abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    ".-:+=^!/*?&<>()[]{}@%$#"
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$"
 )
 _Z85_DECODE = {c: i for i, c in enumerate(_Z85_ALPHABET)}
 
@@ -1652,5 +1706,32 @@ def z85_decode(text: str) -> bytes:
         out = out[:-pad]
     return bytes(out)
 
+# ------------------------------------------------------------------------
+# Statistics class
+# ------------------------------------------------------------------------
+class InterfaceStats():
+    def __init__(self):
+        self._direct_attempts = 0
+        self._direct_success = 0
+        self._channel_attempts = 0
+    
+    def log_stats(self):
+        RNS.log(
+            f"Direct attempts: {self._direct_attempts}, successes: {self._direct_success}, "
+            f"Channel attempts: {self._channel_attempts}",
+            RNS.LOG_INFO
+        )
+    
+    def increment_direct_attempts(self):
+        self._direct_attempts += 1
+        
+    def increment_direct_success(self):
+        self._direct_success += 1
+    
+    def increment_channel_attempts(self):
+        self._channel_attempts += 1
+        
+    def increment_channel_success(self):
+        self._channel_success += 1
 
 interface_class = MeshCore_Dynamic_Interface
