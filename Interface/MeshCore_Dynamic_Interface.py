@@ -1503,6 +1503,11 @@ class MeshCore_Dynamic_Interface(Interface):
                                         self._mc.commands.send_path_discovery_sync(target_key), 
                                         self._loop
                                     )
+                                    
+                                    asyncio.run_coroutine_threadsafe(
+                                        self._mc.commands.send_advert(flood=True), 
+                                        self._loop
+                                        )
                             else:
                                 RNS.log(f"Skipping path discovery request for peer key {target_key} due to cooldown.", RNS.LOG_INFO)
                             
