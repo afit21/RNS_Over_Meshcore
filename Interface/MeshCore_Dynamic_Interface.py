@@ -1654,7 +1654,7 @@ class MeshCore_Dynamic_Interface(Interface):
 # ------------------------------------------------------------------------
 
 _Z85_ALPHABET = (
-    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$"
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
 )
 _Z85_DECODE = {c: i for i, c in enumerate(_Z85_ALPHABET)}
 
