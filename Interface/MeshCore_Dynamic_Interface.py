@@ -1617,6 +1617,8 @@ class MeshCore_Dynamic_Interface(Interface):
                                 f"out_path_len={opl}"
                                 if opl != -1 else "out_path_len=-1 (no known route)"
                             )
+                            if opl > 0:
+                                asyncio.create_task(self._mc.commands.send_path_discovery_sync(target)) # Request path
                     except Exception:
                         pass
                     RNS.log(
