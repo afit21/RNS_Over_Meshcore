@@ -329,9 +329,6 @@ class MeshCore_Dynamic_Interface(Interface):
         self.name  = configuration.get("name", "MeshCore Dynamic")
         cfg        = configuration
 
-        # --- Interface stats
-        self.stats = InterfaceStats()
-
         # --- Transport selection -------------------------------------------
         self.transport = cfg.get("transport", "serial").lower()
 
@@ -1624,7 +1621,6 @@ class MeshCore_Dynamic_Interface(Interface):
 
             try:
                 if mode == "direct":
-                    self.stats.increment_direct_attempts() #Log direct send attempt
                     result = await self._mc.commands.send_msg(target, frag_str)
                     if result is None or result.type != self._EventType.MSG_SENT:
                         reason = (
@@ -1687,7 +1683,6 @@ class MeshCore_Dynamic_Interface(Interface):
                             )
                         else:
                             #Ack received -- log success and continue to next fragment
-                            self.stats.increment_direct_success() #Log direct send success
                             RNS.log(
                                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                                 f"Direct send to peer key {target[:12] if target else '?'}... "
@@ -1695,7 +1690,6 @@ class MeshCore_Dynamic_Interface(Interface):
                                 RNS.LOG_INFO
                             )
                 else:
-                    self.stats.increment_channel_attempts() #Log channel send attempt
                     await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
             except Exception as exc:
                 if mode == "direct":
@@ -1726,7 +1720,6 @@ class MeshCore_Dynamic_Interface(Interface):
                     )
                     try:
                         # Fallback to channel if targeted routing exceptions happen mid-transit
-                        self.stats.increment_channel_attempts() #Log channel send attempt
                         self._outqueue.put_nowait(("channel", None, frag_str))
                     except queue.Full:
                         pass
@@ -1813,33 +1806,5 @@ def z85_decode(text: str) -> bytes:
     if pad:
         out = out[:-pad]
     return bytes(out)
-
-# ------------------------------------------------------------------------
-# Statistics class
-# ------------------------------------------------------------------------
-class InterfaceStats():
-    def __init__(self):
-        self._direct_attempts = 0
-        self._direct_success = 0
-        self._channel_attempts = 0
-    
-    def log_stats(self):
-        RNS.log(
-            f"Direct attempts: {self._direct_attempts}, successes: {self._direct_success}, "
-            f"Channel attempts: {self._channel_attempts}",
-            RNS.LOG_INFO
-        )
-    
-    def increment_direct_attempts(self):
-        self._direct_attempts += 1
-        
-    def increment_direct_success(self):
-        self._direct_success += 1
-    
-    def increment_channel_attempts(self):
-        self._channel_attempts += 1
-        
-    def increment_channel_success(self):
-        self._channel_success += 1
 
 interface_class = MeshCore_Dynamic_Interface
