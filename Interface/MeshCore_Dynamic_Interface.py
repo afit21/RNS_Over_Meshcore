@@ -509,6 +509,9 @@ class MeshCore_Dynamic_Interface(Interface):
 
         self._setup_done = threading.Event()
         self._load_meshcore_or_panic()
+        
+        #cache of timestamps for the last path request sent to each destination, used to enforce outgoing_path_req_rate
+        self._path_req_timestamps = {}
 
         self._loop = asyncio.new_event_loop()
         assert self._loop is not None
@@ -692,6 +695,18 @@ class MeshCore_Dynamic_Interface(Interface):
             ET.CHANNEL_MSG_RECV,
             _channel_msg_callback
         )
+
+        def _meshcore_contact_callback(event) -> None:
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self._on_meshcore_contact_event(event), self._loop
+                )
+
+        for _name in ("NEW_CONTACT", "CONTACTS", "CONTACTS_FULL",
+                      "PATH_UPDATE", "ADVERTISEMENT"):
+            _contact_et = getattr(ET, _name, None)
+            if _contact_et is not None:
+                self._mc.subscribe(_contact_et, _meshcore_contact_callback)
 
         _direct_recv_et = None
         for _name in ("CONTACT_MSG_RECV", "DIRECT_MSG_RECV", "PRIVATE_MSG_RECV",
@@ -1010,6 +1025,36 @@ class MeshCore_Dynamic_Interface(Interface):
     async def _on_msg_ack(self, event):
         pass
 
+    def _register_peer_binding(self, sender_name: str, mc_pubkey: str,
+                              can_route: bool = True):
+        if not sender_name or not mc_pubkey:
+            return False
+
+        with self._peer_lock:
+            existing    = self._peer_table.get(sender_name)
+            cap_changed = self._peer_caps.get(sender_name) != can_route
+
+            if existing != mc_pubkey:
+                self._peer_table[sender_name]  = mc_pubkey
+                self._reverse_peers[mc_pubkey] = sender_name
+                for pfx_len in (8, 12, 16, 24):
+                    pfx = mc_pubkey[:pfx_len]
+                    if pfx:
+                        self._reverse_peers[pfx] = sender_name
+
+            self._peer_caps[sender_name]      = can_route
+            self._peer_last_seen[sender_name] = time.monotonic()
+
+        changed = (existing != mc_pubkey) or cap_changed
+        if changed:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Bound peer '{sender_name}' -> {mc_pubkey[:16]}... "
+                f"[{'router' if can_route else 'edge — no upstream routing'}]",
+                RNS.LOG_INFO
+            )
+        return changed
+
     async def _handle_bind(self, text: str, bind_idx: int, req_idx: int = -1):
         is_req  = (req_idx != -1 and (bind_idx == -1 or req_idx <= bind_idx))
         prefix  = self.BIND_REQ_PREFIX if is_req else self.BIND_PREFIX
@@ -1032,20 +1077,7 @@ class MeshCore_Dynamic_Interface(Interface):
         if not mc_pubkey:
             return
 
-        with self._peer_lock:
-            existing    = self._peer_table.get(sender_name)
-            cap_changed = self._peer_caps.get(sender_name) != peer_can_route
-
-            if existing != mc_pubkey:
-                self._peer_table[sender_name]  = mc_pubkey
-                self._reverse_peers[mc_pubkey] = sender_name
-                for pfx_len in (8, 12, 16, 24):
-                    pfx = mc_pubkey[:pfx_len]
-                    if pfx:
-                        self._reverse_peers[pfx] = sender_name
-
-            self._peer_caps[sender_name]      = peer_can_route
-            self._peer_last_seen[sender_name] = time.monotonic()
+        peer_changed = self._register_peer_binding(sender_name, mc_pubkey, peer_can_route)
 
         # Backfill: this sender may have sent us RNS packets before we knew
         # their key. Those tokens were stashed instead of dropped -- drain
@@ -1066,7 +1098,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
-        if existing != mc_pubkey or cap_changed:
+        if peer_changed:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"{'REQ from' if is_req else 'Peer'} '{sender_name}' "
@@ -1080,6 +1112,51 @@ class MeshCore_Dynamic_Interface(Interface):
                 self._pending_resp_task = asyncio.create_task(
                     self._delayed_bind_response()
                 )
+
+    def _bind_meshcore_contact(self, contact):
+        if not isinstance(contact, dict):
+            return
+
+        key = (
+            contact.get("public_key")
+            or contact.get("pubkey")
+            or contact.get("peer_pubkey")
+            or contact.get("node_pubkey")
+            or ""
+        )
+        key = str(key).strip()
+        if not key:
+            return
+
+        cap_value = contact.get("can_route", True)
+        if isinstance(cap_value, str):
+            cap_value = cap_value.lower() not in ("no", "false", "0", "edge")
+        if not isinstance(cap_value, bool):
+            cap_value = bool(cap_value)
+
+        name = (
+            contact.get("adv_name")
+            or contact.get("name")
+            or contact.get("node_name")
+            or contact.get("advertised_name")
+            or ""
+        )
+        name = str(name).strip()
+
+        if name:
+            self._register_peer_binding(name, key, cap_value)
+
+    async def _on_meshcore_contact_event(self, event):
+        payload = getattr(event, "payload", None)
+        if isinstance(payload, dict):
+            if any(key in payload for key in ("public_key", "pubkey", "peer_pubkey", "node_pubkey")):
+                self._bind_meshcore_contact(payload)
+            else:
+                for contact in payload.values():
+                    self._bind_meshcore_contact(contact)
+        elif isinstance(payload, (list, tuple, set)):
+            for contact in payload:
+                self._bind_meshcore_contact(contact)
 
     def _resolve_sender_key(self, key_str: str) -> str:
         if not key_str:
@@ -1412,8 +1489,23 @@ class MeshCore_Dynamic_Interface(Interface):
                     if self._mc:
                         contact = self._mc.get_contact_by_key_prefix(target_key)
                         opl = contact.get("out_path_len", -1) if contact else -1
+                        # In your routing selection logic:
                         if opl == -1:
                             channel_reason = f"Peer bound but no resolved MeshCore path yet (out_path_len=-1) for {target_key}"
+                            
+                            now = time.time()
+                            last_req = self._path_req_timestamps.get(target_key, 0)
+                            if (now - last_req) > 15.0:  # 15 second cooldown per peer
+                                self._path_req_timestamps[target_key] = now
+                                if self._loop is not None:
+                                    RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
+                                    asyncio.run_coroutine_threadsafe(
+                                        self._mc.commands.send_path_discovery_sync(target_key), 
+                                        self._loop
+                                    )
+                            else:
+                                RNS.log(f"Skipping path discovery request for peer key {target_key} due to cooldown.", RNS.LOG_INFO)
+                            
                             target_key = None
                             
 
@@ -1615,10 +1707,10 @@ class MeshCore_Dynamic_Interface(Interface):
                             opl = contact.get("out_path_len", -1)
                             path_info = (
                                 f"out_path_len={opl}"
-                                if opl != -1 else "out_path_len=-1 (no known route)"
+                                if opl != -1 else "out_path_len=-1 (no known route) - Requesting new path discovery"
                             )
                             if opl > 0:
-                                asyncio.create_task(self._mc.commands.send_path_discovery_sync(target)) # Request path
+                                asyncio.run_coroutine_threadsafe(self._mc.commands.send_path_discovery_sync(target), self._loop) # Request path
                     except Exception:
                         pass
                     RNS.log(
