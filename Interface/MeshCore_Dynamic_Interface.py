@@ -2,6 +2,27 @@
 MeshCore_Dynamic_Interface.py
 Reticulum (RNS) interface over a MeshCore LoRa mesh network.
 
+TODO:
+    Review issues:
+    - Retransmission queue (transmits don't pass all: mode, target, frag_str, queued_at, pkt_id)
+    - Race condition in route learning (In _process_tunnel_text())
+    - Malformed packet crash (address by checking length before decode)
+    
+    Proposed changes:
+    - Log fail for retransmit fallback (After except queue.Full:)
+    - replace time.time() with time.monotonic()
+
+    Core optimisations:
+    - [Big] Split direct and channel queues
+    - [Big] Adaptive fragment sizing (get node name, and firmware limit, size the payload accordingly). Adapt fragment size if direct, channel, and based on node names. Save 3 bytes at end for repeater info
+    - Make retransmissions fragment-aware (retransmit currently retransmits every fragment, regardless of if some arrived)
+    - Replace periodic contact refresh with on direct route failure and/or path length unknown
+
+    Byte Optimisations:
+    - Shorten 'RNS:' to 'R:'
+    - Swap to 2 byte packet id instead of 4 byte.
+    - Reduce rns advert message sizes
+
 Implements a hybrid channel-broadcast / unicast-direct routing strategy with
 demand-driven peer discovery and edge-node capability advertisement.  No static
 remote-node configuration is required.
