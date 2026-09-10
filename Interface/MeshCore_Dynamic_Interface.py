@@ -611,15 +611,19 @@ class MeshCore_Dynamic_Interface(Interface):
             budget         = firmware_limit - len(self._own_node_name) - 2
             max_payload    = ((budget - 4) * 3 // 4 - self.HEADER_SIZE) - margin
 
-            if max_payload < self.payload_size:
-                RNS.log(
-                    f"MeshCore_Dynamic_Interface [{self.name}]: "
-                    f"Auto-adjusting payload_size from {self.payload_size} "
-                    f"to {max_payload} due to node name length.",
-                    RNS.LOG_INFO
-                )
-                self.payload_size = max_payload
-                return max_payload
+            if max_payload == self.payload_size:
+                return self.payload_size
+            
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Auto-adjusting payload_size from {self.payload_size} "
+                f"to {max_payload} due to node name length.",
+                RNS.LOG_INFO
+            )
+
+            self.payload_size = max_payload
+            return max_payload
+        
         return self.payload_size
     
     def _load_meshcore_or_panic(self):
