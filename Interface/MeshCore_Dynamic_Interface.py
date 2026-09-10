@@ -1820,7 +1820,7 @@ class MeshCore_Dynamic_Interface(Interface):
                     )
                     try:
                         # Fallback to channel if targeted routing exceptions happen mid-transit
-                        self._outqueue.put_nowait(("channel", None, frag_str))
+                        self._outqueue.put_nowait(("channel", None, frag_str, queued_at, pkt_id))
                     except queue.Full:
                         pass
                 self._outqueue.task_done()
