@@ -539,6 +539,20 @@ class MeshCore_Dynamic_Interface(Interface):
         #cache of timestamps for the last path request sent to each destination, used to enforce outgoing_path_req_rate
         self._path_req_timestamps = {}
 
+        # Adaptive backoff for path discovery, keyed by target MeshCore key.
+        # A peer that resolves cleanly stays at the base cooldown. A peer
+        # whose discovery keeps failing (e.g. an asymmetric RF hop through a
+        # repeater -- one direction works, the other never resolves a path)
+        # backs off exponentially so we stop hammering a link that isn't
+        # going to answer, while still periodically re-checking in case
+        # conditions change (repeater repositioned, interference clears,
+        # etc). Reset to the base cooldown the moment discovery succeeds.
+        self._path_discovery_base_cooldown_s = 15.0
+        self._path_discovery_max_cooldown_s  = 900.0   # 15 min ceiling
+        self._path_discovery_backoff_factor  = 2.0
+        self._path_req_failures = {}   # target_key -> consecutive failure count
+        self._path_req_lock     = threading.Lock()
+
         self._loop = asyncio.new_event_loop()
         assert self._loop is not None
         self._loop_thread = threading.Thread(
@@ -948,6 +962,32 @@ class MeshCore_Dynamic_Interface(Interface):
         except Exception:
             pass
     
+    def _path_discovery_cooldown_for(self, target_key: str) -> float:
+        """Current cooldown to apply before the next discovery attempt for
+        this target, based on its consecutive-failure count. Doubles per
+        failure (capped) so a persistently-broken hop is retried less and
+        less often instead of at a fixed interval forever."""
+        with self._path_req_lock:
+            failures = self._path_req_failures.get(target_key, 0)
+        cooldown = self._path_discovery_base_cooldown_s * (
+            self._path_discovery_backoff_factor ** failures
+        )
+        # +/-20% jitter so multiple peers backing off together don't all
+        # retry in the same instant.
+        cooldown *= random.uniform(0.8, 1.2)
+        return min(cooldown, self._path_discovery_max_cooldown_s)
+
+    def _record_path_discovery_result(self, target_key: str, success: bool) -> None:
+        with self._path_req_lock:
+            if success:
+                # Any success resets the peer back to fast retries -- the
+                # link is currently working, no reason to stay backed off.
+                self._path_req_failures.pop(target_key, None)
+            else:
+                self._path_req_failures[target_key] = (
+                    self._path_req_failures.get(target_key, 0) + 1
+                )
+
     async def discover_path(self, contact):
         if self._mc is None:
             RNS.log(
@@ -987,7 +1027,36 @@ class MeshCore_Dynamic_Interface(Interface):
             RNS.LOG_INFO
         )
 
+        resolved = bool(updated) and updated.get("out_path_len", -1) not in (-1, None)
+        self._record_path_discovery_result(key, resolved)
+        if not resolved:
+            with self._path_req_lock:
+                failures = self._path_req_failures.get(key, 0)
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Path discovery for {key[:16]}... still unresolved after "
+                f"{failures} consecutive failure(s) -- next retry backed off to "
+                f"~{self._path_discovery_cooldown_for(key):.0f}s.",
+                RNS.LOG_INFO
+            )
+
         return res
+        
+        await self._mc.ensure_contacts()
+        timeout = 0 if not "timeout" in contact else contact["timeout"]
+        res = await self._mc.commands.send_path_discovery_sync(contact, timeout)
+        if res is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Path discovery failed for contact {contact}.",
+                RNS.LOG_WARNING
+            )
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Path discovery result for contact {contact}: {res}.",
+                RNS.LOG_INFO
+            )
     
     # -------------------------------------------------------------------------
     # Maintenance
@@ -1606,7 +1675,8 @@ class MeshCore_Dynamic_Interface(Interface):
                             
                             now = time.monotonic()
                             last_req = self._path_req_timestamps.get(target_key, 0)
-                            if (now - last_req) > 15.0:  # 15 second cooldown per peer
+                            cooldown = self._path_discovery_cooldown_for(target_key)
+                            if (now - last_req) > cooldown:
                                 self._path_req_timestamps[target_key] = now
                                 if self._loop is not None:
                                     if contact is not None:
@@ -1623,7 +1693,11 @@ class MeshCore_Dynamic_Interface(Interface):
                                         self._loop
                                         )
                             else:
-                                RNS.log(f"Skipping path discovery request for peer key {target_key} due to cooldown.", RNS.LOG_INFO)
+                                RNS.log(
+                                    f"Skipping path discovery request for peer key {target_key} "
+                                    f"-- backed off (retry in ~{cooldown - (now - last_req):.0f}s).",
+                                    RNS.LOG_INFO
+                                )
                             
                             target_key = None
                             
@@ -1829,7 +1903,12 @@ class MeshCore_Dynamic_Interface(Interface):
                                 if opl != -1 else "out_path_len=-1 (no known route) - Requesting new path discovery"
                             )
                             if opl > 0:
-                                asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
+                                now = time.monotonic()
+                                last_req = self._path_req_timestamps.get(target, 0)
+                                cooldown = self._path_discovery_cooldown_for(target)
+                                if (now - last_req) > cooldown:
+                                    self._path_req_timestamps[target] = now
+                                    asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
                     except Exception:
                         pass
                     RNS.log(
