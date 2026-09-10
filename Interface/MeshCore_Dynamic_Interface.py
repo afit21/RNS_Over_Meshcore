@@ -1642,7 +1642,12 @@ class MeshCore_Dynamic_Interface(Interface):
                     try:
                         self._outqueue.put_nowait((mode, target, frag_str))
                     except queue.Full:
-                        pass
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"Retransmit pass {i + 1}/{count} failed to enqueue "
+                            f"({len(fragments)} fragment(s), same pkt_id) -- queue full.",
+                            RNS.LOG_WARNING
+                        )
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"Retransmit pass {i + 1}/{count} sent "
