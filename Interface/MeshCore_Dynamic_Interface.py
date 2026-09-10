@@ -4,9 +4,7 @@ Reticulum (RNS) interface over a MeshCore LoRa mesh network.
 
 TODO:
     Review issues:
-    - Retransmission queue (transmits don't pass all: mode, target, frag_str, queued_at, pkt_id)
     - Race condition in route learning (In _process_tunnel_text())
-    - Malformed packet crash (address by checking length before decode)
     
 
     Core optimisations:
@@ -1271,6 +1269,9 @@ class MeshCore_Dynamic_Interface(Interface):
             return
 
         # Header unpacked big-endian matching structural change (1B index, 4B packet ID, 1B total fragments)
+        if len(raw) < self.HEADER_SIZE:
+            return
+        
         frag_idx, pkt_id, frag_total = struct.unpack(">BIB", raw[:6])
         payload    = raw[self.HEADER_SIZE:]
 
@@ -1674,7 +1675,8 @@ class MeshCore_Dynamic_Interface(Interface):
             for frag_str in fragments:
                 for mode, target in route:
                     try:
-                        self._outqueue.put_nowait((mode, target, frag_str))
+                        queued_at = time.monotonic()
+                        self._outqueue.put_nowait((mode, target, frag_str, queued_at, None))
                     except queue.Full:
                         RNS.log(
                             f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -1706,19 +1708,16 @@ class MeshCore_Dynamic_Interface(Interface):
             # Safe non-blocking cross-thread extraction via run_in_executor
             item = await self._loop.run_in_executor(None, self._outqueue.get)
             
-            try:
-                mode, target, frag_str, queued_at, pkt_id = item
-                queue_wait = time.monotonic() - queued_at
+            mode, target, frag_str, queued_at, pkt_id = item
+            queue_wait = time.monotonic() - queued_at
                 
-                #Log queue wait time
-                RNS.log(
-                    f"[PERF {pkt_id}] DEQUEUE "
-                    f"queue_wait={queue_wait:.3f}s "
-                    f"depth={self._outqueue.qsize()}",
-                    RNS.LOG_INFO
-                )
-            except Exception:
-                mode, target, frag_str = item
+            #Log queue wait time
+            RNS.log(
+                f"[PERF {pkt_id if pkt_id is not None else 'unknown'}] DEQUEUE "
+                f"queue_wait={queue_wait:.3f}s "
+                f"depth={self._outqueue.qsize()}",
+                RNS.LOG_INFO
+            )
 
             try:
                 if mode == "direct":
