@@ -30,6 +30,12 @@ TODO:
     - Add safety flag in config to block certain config options unless safety == false
         - Block config settings that would flood the meshcore
 
+    Announce and path request limiting changes:
+    - prioritise announces that get through by amount of hops.
+    - Block announces if a node teaches an announce rate threashold
+    - Track who each announce is for and either drop or cache the announce for later.
+        - Forward cached announces when Meshcore utilisation is low.
+
 Implements a hybrid channel-broadcast / unicast-direct routing strategy with
 demand-driven peer discovery and edge-node capability advertisement.  No static
 remote-node configuration is required.
