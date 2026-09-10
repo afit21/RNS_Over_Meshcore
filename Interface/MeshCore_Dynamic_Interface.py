@@ -17,11 +17,18 @@ TODO:
     - [Big] Adaptive fragment sizing (get node name, and firmware limit, size the payload accordingly). Adapt fragment size if direct, channel, and based on node names. Save 3 bytes at end for repeater info
     - Make retransmissions fragment-aware (retransmit currently retransmits every fragment, regardless of if some arrived)
     - Replace periodic contact refresh with on direct route failure and/or path length unknown
+    - Adaptive transmission delays
 
     Byte Optimisations:
     - Shorten 'RNS:' to 'R:'
     - Swap to 2 byte packet id instead of 4 byte.
+        - Randmise starting packet
+        - purge old packet ids
     - Reduce rns advert message sizes
+
+    Usability changes:
+    - Add safety flag in config to block certain config options unless safety == false
+        - Block config settings that would flood the meshcore
 
 Implements a hybrid channel-broadcast / unicast-direct routing strategy with
 demand-driven peer discovery and edge-node capability advertisement.  No static
