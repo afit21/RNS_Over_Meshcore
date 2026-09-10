@@ -10,7 +10,7 @@ TODO:
     
     Proposed changes:
     - Log fail for retransmit fallback (After except queue.Full:)
-    - replace time.time() with time.monotonic()
+    
 
     Core optimisations:
     - [Big] Split direct and channel queues
@@ -1549,7 +1549,7 @@ class MeshCore_Dynamic_Interface(Interface):
                         if opl == -1:
                             channel_reason = f"Peer bound but no resolved MeshCore path yet (out_path_len=-1) for {target_key}"
                             
-                            now = time.time()
+                            now = time.monotonic()
                             last_req = self._path_req_timestamps.get(target_key, 0)
                             if (now - last_req) > 15.0:  # 15 second cooldown per peer
                                 self._path_req_timestamps[target_key] = now
