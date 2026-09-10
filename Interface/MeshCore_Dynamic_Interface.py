@@ -402,6 +402,14 @@ class MeshCore_Dynamic_Interface(Interface):
         # cap the wait and let the fallback handle it instead.
         self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 8.0))
 
+        # Adaptive backoff for MeshCore path-discovery retries per peer.
+        # base: cooldown after the first failure. max: ceiling regardless of
+        # how many consecutive failures. factor: multiplier applied per
+        # additional failure (base * factor**failures, capped at max).
+        self._path_discovery_base_cooldown_s = float(cfg.get("path_discovery_base_cooldown", 15.0))
+        self._path_discovery_max_cooldown_s  = float(cfg.get("path_discovery_max_cooldown", 900.0))
+        self._path_discovery_backoff_factor  = float(cfg.get("path_discovery_backoff_factor", 2.0))
+
         # Default adjusted to 300s (5 minutes) for high-latency meshes
         self.fragment_timeout_s = float(cfg.get("fragment_timeout", 300.0))
         self.rate_limit_bps     = int(cfg.get("rate_limit", 0))
@@ -547,9 +555,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # going to answer, while still periodically re-checking in case
         # conditions change (repeater repositioned, interference clears,
         # etc). Reset to the base cooldown the moment discovery succeeds.
-        self._path_discovery_base_cooldown_s = 15.0
-        self._path_discovery_max_cooldown_s  = 900.0   # 15 min ceiling
-        self._path_discovery_backoff_factor  = 2.0
+        # (base/max/factor are set from config above in __init__)
         self._path_req_failures = {}   # target_key -> consecutive failure count
         self._path_req_lock     = threading.Lock()
 
