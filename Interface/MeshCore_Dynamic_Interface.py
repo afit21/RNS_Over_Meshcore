@@ -988,22 +988,6 @@ class MeshCore_Dynamic_Interface(Interface):
         )
 
         return res
-        
-        await self._mc.ensure_contacts()
-        timeout = 0 if not "timeout" in contact else contact["timeout"]
-        res = await self._mc.commands.send_path_discovery_sync(contact, timeout)
-        if res is None:
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Path discovery failed for contact {contact}.",
-                RNS.LOG_WARNING
-            )
-        else:
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Path discovery result for contact {contact}: {res}.",
-                RNS.LOG_INFO
-            )
     
     # -------------------------------------------------------------------------
     # Maintenance
