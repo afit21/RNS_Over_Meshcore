@@ -911,7 +911,32 @@ class MeshCore_Dynamic_Interface(Interface):
             )
         except Exception:
             pass
-
+    
+    async def discover_path(self, contact):
+        if self._mc is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Cannot discover path: MeshCore instance is not initialized.",
+                RNS.LOG_ERROR
+            )
+            return
+        
+        await self._mc.ensure_contacts()
+        timeout = 0 if not "timeout" in contact else contact["timeout"]
+        res = await self._mc.commands.send_path_discovery_sync(contact, timeout)
+        if res is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Path discovery failed for contact {contact}.",
+                RNS.LOG_WARNING
+            )
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Path discovery result for contact {contact}: {res}.",
+                RNS.LOG_INFO
+            )
+    
     # -------------------------------------------------------------------------
     # Maintenance
     # -------------------------------------------------------------------------
@@ -1532,7 +1557,7 @@ class MeshCore_Dynamic_Interface(Interface):
                                     if contact is not None:
                                         RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
                                         asyncio.run_coroutine_threadsafe(
-                                            self._mc.commands.send_path_discovery_sync(contact), 
+                                            self.discover_path(contact), 
                                             self._loop
                                         )
                                     else:
@@ -1746,7 +1771,7 @@ class MeshCore_Dynamic_Interface(Interface):
                                 if opl != -1 else "out_path_len=-1 (no known route) - Requesting new path discovery"
                             )
                             if opl > 0:
-                                asyncio.run_coroutine_threadsafe(self._mc.commands.send_path_discovery_sync(target), self._loop) # Request path
+                                asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
                     except Exception:
                         pass
                     RNS.log(
