@@ -1529,11 +1529,14 @@ class MeshCore_Dynamic_Interface(Interface):
                             if (now - last_req) > 15.0:  # 15 second cooldown per peer
                                 self._path_req_timestamps[target_key] = now
                                 if self._loop is not None:
-                                    RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
-                                    asyncio.run_coroutine_threadsafe(
-                                        self._mc.commands.send_path_discovery_sync(contact), 
-                                        self._loop
-                                    )
+                                    if contact is not None:
+                                        RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
+                                        asyncio.run_coroutine_threadsafe(
+                                            self._mc.commands.send_path_discovery_sync(contact), 
+                                            self._loop
+                                        )
+                                    else:
+                                        RNS.log(f"requesting path discovery for peer key {target_key} (no contact found)", RNS.LOG_INFO)
                                     
                                     asyncio.run_coroutine_threadsafe(
                                         self._mc.commands.send_advert(flood=True), 
