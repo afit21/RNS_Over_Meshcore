@@ -586,7 +586,44 @@ class MeshCore_Dynamic_Interface(Interface):
     # -------------------------------------------------------------------------
     # Startup helpers
     # -------------------------------------------------------------------------
+    
+    def _auto_payload_size(self):
+        if self._own_node_name:
+            # MeshCore firmware silently truncates channel messages that exceed a
+            # hardware-dependent character limit (observed ~128 chars on common
+            # firmware builds). The firmware also prepends the sender's node name
+            # when relaying channel messages, so the effective character budget
+            # for the encoded portion is:
+            #
+            #     budget = firmware_limit - len(node_name) - 2       (": " separator)
+            #
+            # Encoded message length:
+            #     msg_len = ceil((payload_size + HEADER_SIZE) * 4/3) + len("RNS:")
+            #
+            # With a 4-byte pkt_id, HEADER_SIZE is 6 bytes. With default payload_size = 64:
+            #     msg_len = ceil(70 * 4/3) + 4 = 94 + 4 = 98 chars
+            #     Safe for node names up to ~28 characters at a 128-char firmware limit.
+            #
+            # To calculate the maximum safe payload size for your node name length:
+            #     budget      = firmware_limit - len(node_name) - 2
+            #     max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
 
+            firmware_limit = 128
+            margin = 2 #safety margin for firmware variations and future changes
+            budget         = firmware_limit - len(self._own_node_name) - 2
+            max_payload    = ((budget - 4) * 3 // 4 - self.HEADER_SIZE) - margin
+
+            if max_payload < self.payload_size:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Auto-adjusting payload_size from {self.payload_size} "
+                    f"to {max_payload} due to node name length.",
+                    RNS.LOG_INFO
+                )
+                self.payload_size = max_payload
+                return max_payload
+        return self.payload_size
+    
     def _load_meshcore_or_panic(self):
         try:
             import meshcore as _mc_mod
@@ -1506,7 +1543,7 @@ class MeshCore_Dynamic_Interface(Interface):
             pkt_id       = self._pkt_id
             self._pkt_id = (self._pkt_id + 1) & 0xFFFFFFFF  # 32-bit bound integer tracking
 
-        handler   = _PacketHandler(data, pkt_id, self.payload_size)
+        handler   = _PacketHandler(data, pkt_id, self._auto_payload_size())
         
         broadcast = self._is_broadcast_packet(data)
         
