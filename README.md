@@ -8,6 +8,7 @@ RNS ships interfaces for TCP, serial, I2P, packet radio, and a handful of others
 
 ## Features
 
+- **Z85 Encoding** (instead of Base64). Other interfaces seem to use Base64 encoding to parse reticulum packets through Meshcore messages. Z85 theoretically expands data by 25% compared to 33% when using base64
 - **Zero static config peer discovery** — nodes find each other with a demand-driven `RNSBIND_REQ` / `RNSBIND` handshake instead of periodic broadcast, based on the RFC 2236 (IGMP) report-suppression pattern to avoid response storms on a shared channel.
 - **Hybrid routing** — channel broadcast for announces/discovery, unicast direct messages for established peer-to-peer sessions, with automatic fallback from direct to channel if a unicast send fails or goes unacknowledged.
 - **RNS Link ID aware routing** — correctly follows Reticulum's ephemeral Link ID once a Link handshake completes, deriving the destination hash locally so routing doesn't break mid-session.
@@ -171,10 +172,8 @@ max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
 Each RNS binary packet is split into `payload_size`-byte chunks. Each chunk is encoded as a MeshCore channel (or direct) message:
 
 ```
-"RNS:" + base64url( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
+"RNS:" + Z48 Encode( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
 ```
-
-Base64 padding is stripped before transmission and restored on receipt.
 
 ### Peer discovery
 
@@ -228,3 +227,4 @@ A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — 
 - This interface is built and tested against a specific `meshcore` library API surface; firmware/library version drift may require updates to event/attribute names.
 
 Yes, I absolutely had help from Claude on this. I'm not a software person, I'm just stubborn enough to think I can beat my head against something until it works. PLEASE feel free to offer improvements and corrections.
+
