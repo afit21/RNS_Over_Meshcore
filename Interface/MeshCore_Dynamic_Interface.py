@@ -952,10 +952,42 @@ class MeshCore_Dynamic_Interface(Interface):
         if self._mc is None:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Cannot discover path: MeshCore instance is not initialized.",
+                f"Cannot discover path: MeshCore not initialized.",
                 RNS.LOG_ERROR
             )
-            return
+            return None
+        
+        await self._mc.ensure_contacts()
+
+        key = contact["public_key"]
+
+        RNS.log(
+            f"PATH DISCOVERY BEFORE: "
+            f"key={key[:16]} "
+            f"out_path_len={contact.get('out_path_len')} "
+            f"out_path={contact.get('out_path')}",
+            RNS.LOG_INFO
+        )
+
+        timeout = contact.get("timeout", 0)
+
+        res = await self._mc.commands.send_path_discovery_sync(
+            contact, timeout
+        )
+
+        await self._mc.ensure_contacts()
+
+        updated = self._mc.get_contact_by_key_prefix(key)
+
+        RNS.log(
+            f"PATH DISCOVERY AFTER: "
+            f"result={res} "
+            f"out_path_len={updated.get('out_path_len') if updated else None} "
+            f"out_path={updated.get('out_path') if updated else None}",
+            RNS.LOG_INFO
+        )
+
+        return res
         
         await self._mc.ensure_contacts()
         timeout = 0 if not "timeout" in contact else contact["timeout"]
