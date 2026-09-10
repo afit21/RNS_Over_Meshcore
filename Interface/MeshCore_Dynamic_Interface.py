@@ -8,9 +8,6 @@ TODO:
     - Race condition in route learning (In _process_tunnel_text())
     - Malformed packet crash (address by checking length before decode)
     
-    Proposed changes:
-    - Log fail for retransmit fallback (After except queue.Full:)
-    
 
     Core optimisations:
     - [Big] Split direct and channel queues
@@ -377,7 +374,7 @@ class MeshCore_Dynamic_Interface(Interface):
         self.channel_idx        = int(str(cfg.get("channel_idx", 0)).strip())
         self.channel_name       = cfg.get("channel_name", "RNSTunnel")
         self.channel_secret_hex = cfg.get("channel_secret",
-                                          "00000000000000000000000000000000")
+                                          "10000000000000000000000000000000")
 
         # --- Optional radio parameter overrides ----------------------------
         self.radio_freq = float(cfg.get("freq", 0))
