@@ -192,6 +192,10 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
   │     # transport = ble                                                   │
   │     # ble_name =           # blank = connect to first found device     │
   │                                                                         │
+  │     # BLE/serial/TCP link resilience                                   │
+  │     auto_reconnect = yes         # try to recover a dropped link       │
+  │     max_reconnect_attempts = 3   # give up after this many tries       │
+  │                                                                         │
   │     # Channel — all nodes on the same tunnel must share these values   │
   │     channel_idx = 0                                                     │
   │     channel_name = RNSTunnel                                            │
@@ -366,6 +370,18 @@ class MeshCore_Dynamic_Interface(Interface):
         self.host     = cfg.get("host",     "127.0.0.1")
         self.tcp_port = int(cfg.get("tcp_port", 4403))
         self.ble_name = cfg.get("ble_name", "")
+
+        # The meshcore library's own connection manager can detect a dropped
+        # serial/BLE/TCP link and transparently reconnect (CONNECTED/
+        # DISCONNECTED events, see _on_mc_connected/_on_mc_disconnected below).
+        # It's off by default in the library itself; we default it on here
+        # since an unattended field radio should try to recover from a USB
+        # re-enumeration or a brief BLE range loss rather than sitting dead
+        # until rnsd is restarted.
+        self.auto_reconnect = (
+            cfg.get("auto_reconnect", "yes").lower() not in ("no", "false", "0")
+        )
+        self.max_reconnect_attempts = int(cfg.get("max_reconnect_attempts", 3))
 
         # --- Channel identity ----------------------------------------------
         self.channel_idx        = int(str(cfg.get("channel_idx", 0)).strip())
@@ -686,11 +702,23 @@ class MeshCore_Dynamic_Interface(Interface):
 
         try:
             if self.transport == "serial":
-                self._mc = await MeshCore.create_serial(self.port, self.baudrate)
+                self._mc = await MeshCore.create_serial(
+                    self.port, self.baudrate,
+                    auto_reconnect=self.auto_reconnect,
+                    max_reconnect_attempts=self.max_reconnect_attempts,
+                )
             elif self.transport == "ble":
-                self._mc = await MeshCore.create_ble(self.ble_name or None)
+                self._mc = await MeshCore.create_ble(
+                    self.ble_name or None,
+                    auto_reconnect=self.auto_reconnect,
+                    max_reconnect_attempts=self.max_reconnect_attempts,
+                )
             elif self.transport == "tcp":
-                self._mc = await MeshCore.create_tcp(self.host, self.tcp_port)
+                self._mc = await MeshCore.create_tcp(
+                    self.host, self.tcp_port,
+                    auto_reconnect=self.auto_reconnect,
+                    max_reconnect_attempts=self.max_reconnect_attempts,
+                )
             else:
                 RNS.log(
                     f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -945,6 +973,40 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_WARNING
             )
 
+        # Connection lifecycle: the meshcore library's connection manager
+        # detects a dropped serial/BLE/TCP link and (with auto_reconnect, see
+        # __init__) transparently retries before giving up. Without this
+        # subscription we'd have no idea a USB re-enumeration or BLE range
+        # loss ever happened -- the interface would just sit "online" with a
+        # dead connection underneath, silently failing every send.
+        _connected_et = getattr(ET, "CONNECTED", None)
+        if _connected_et is not None:
+            def _connected_callback(e) -> None:
+                if self._loop is not None:
+                    asyncio.run_coroutine_threadsafe(
+                        self._on_mc_connected(e), self._loop
+                    )
+            self._mc.subscribe(_connected_et, _connected_callback)
+
+        _disconnected_et = getattr(ET, "DISCONNECTED", None)
+        if _disconnected_et is not None:
+            def _disconnected_callback(e) -> None:
+                if self._loop is not None:
+                    asyncio.run_coroutine_threadsafe(
+                        self._on_mc_disconnected(e), self._loop
+                    )
+            self._mc.subscribe(_disconnected_et, _disconnected_callback)
+
+        if _connected_et is None or _disconnected_et is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"This meshcore library has no CONNECTED/DISCONNECTED events "
+                f"-- a dropped link (USB unplug, BLE out of range) will not "
+                f"be detected; the interface may stay marked online while "
+                f"the underlying connection is dead.",
+                RNS.LOG_WARNING
+            )
+
         await self._mc.start_auto_message_fetching()
 
         asyncio.create_task(self._cleanup_loop())
@@ -967,7 +1029,8 @@ class MeshCore_Dynamic_Interface(Interface):
             f"Interface ready -- transport={self.transport} "
             f"can_route={self.can_route} allow_direct={self.allow_direct} "
             f"direct_api={self._has_direct_api} payload_size={self.payload_size} "
-            f"peer_ttl={self.peer_ttl_s:.0f}s.",
+            f"peer_ttl={self.peer_ttl_s:.0f}s auto_reconnect={self.auto_reconnect}"
+            f"{f'({self.max_reconnect_attempts} attempts)' if self.auto_reconnect else ''}.",
             RNS.LOG_INFO
         )
 
@@ -993,7 +1056,13 @@ class MeshCore_Dynamic_Interface(Interface):
             if not self.online or self._mc is None:
                 continue
             try:
-                await self._mc.ensure_contacts()
+                # follow=True is required here: the library's ensure_contacts()
+                # is a no-op once contacts have been fetched once unless both
+                # follow=True is passed AND its internal dirty flag is set (see
+                # meshcore.MeshCore.ensure_contacts). Without follow=True this
+                # call has silently done nothing since the initial fetch in
+                # _async_setup, defeating the whole point of this loop.
+                await self._mc.ensure_contacts(follow=True)
             except Exception as exc:
                 RNS.log(
                     f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -1152,7 +1221,12 @@ class MeshCore_Dynamic_Interface(Interface):
             contact, timeout
         )
 
-        await self._mc.ensure_contacts()
+        # ensure_contacts() only actually re-fetches when follow=True is
+        # passed and the library's internal dirty flag is set (see
+        # meshcore.MeshCore.ensure_contacts) -- without follow=True this is
+        # a silent no-op once contacts have been fetched once, which would
+        # leave `updated` below reading the stale pre-discovery contact.
+        await self._mc.ensure_contacts(follow=True)
 
         updated = self._mc.get_contact_by_key_prefix(key)
 
@@ -1331,6 +1405,37 @@ class MeshCore_Dynamic_Interface(Interface):
 
     async def _on_msg_ack(self, event):
         pass
+
+    async def _on_mc_connected(self, event):
+        payload = getattr(event, "payload", {}) or {}
+        was_offline = not self.online
+        self.online = True
+        if payload.get("reconnected"):
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Reconnected to MeshCore device after a dropped link.",
+                RNS.LOG_NOTICE
+            )
+        elif was_offline:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"MeshCore connection established.",
+                RNS.LOG_INFO
+            )
+
+    async def _on_mc_disconnected(self, event):
+        payload = getattr(event, "payload", {}) or {}
+        reason = payload.get("reason", "unknown")
+        self.online = False
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"MeshCore connection lost (reason={reason}"
+            f"{', reconnect attempts exhausted' if payload.get('max_attempts_exceeded') else ''}). "
+            f"Interface marked offline -- outgoing sends will be skipped until "
+            f"the link recovers"
+            f"{' (auto_reconnect is off, so this requires an rnsd restart or a manual reconnect)' if not self.auto_reconnect else ''}.",
+            RNS.LOG_WARNING
+        )
 
     def _register_peer_binding(self, sender_name: str, mc_pubkey: str,
                               can_route: bool = True):
