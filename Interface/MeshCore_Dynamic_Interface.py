@@ -606,6 +606,15 @@ class MeshCore_Dynamic_Interface(Interface):
         self._rns_to_mc_map  = {}
         self._peer_lock      = threading.Lock()
 
+        # mc_pubkey -> (out_path_len, out_path) last seen for that peer, so
+        # we can log when MeshCore's own idea of the path actually changes
+        # rather than just what we assume it is. Fed both by contact-update
+        # events (NEW_CONTACT/CONTACTS/CONTACTS_FULL/PATH_UPDATE/ADVERTISEMENT
+        # -- see _bind_meshcore_contact) and by the periodic contact refresh
+        # loop, since ensure_contacts()/get_contacts() dispatches a CONTACTS
+        # event that flows through the same handler.
+        self._peer_last_path = {}
+
         # sender_name -> set of RNS tokens observed from them before their
         # MeshCore pubkey was known (RNSBIND not yet complete). Backfilled
         # into _rns_to_mc_map the moment _handle_bind learns that sender's
@@ -1291,6 +1300,36 @@ class MeshCore_Dynamic_Interface(Interface):
 
         timeout = contact.get("timeout", 0)
 
+        # IMPORTANT (verified against the MeshCore firmware source,
+        # examples/companion_radio/MyMesh.cpp): CMD_SEND_PATH_DISCOVERY_REQ
+        # (what send_path_discovery_sync sends) is handled as a one-shot
+        # diagnostic query. When the response arrives, MyMesh::onContactPathRecv()
+        # matches it against `pending_discovery` and returns false BEFORE
+        # calling into BaseChatMesh::onContactPathRecv() -- the function that
+        # would otherwise write out_path_len/out_path into the device's own
+        # persistent contact record and mark it dirty for a flash write. It
+        # only pushes a one-off PATH_DISCOVERY_RESPONSE frame back to
+        # whichever client happens to be connected. In other words: a
+        # successful discovery here tells US the path, but the MeshCore
+        # device's own contact table -- the one the official app reads when
+        # it connects -- is NEVER updated by this command. That's why a path
+        # "discovered" this way can look resolved to our interface while the
+        # official app still sees it as unresolved.
+        #
+        # An ordinary message exchange doesn't have this problem: its ACK
+        # flows through the normal onContactPathRecv() path, which does
+        # persist it -- that's why manually sending a message from the
+        # official app was enough to fix it previously.
+        #
+        # The fix: explicitly persist a successful discovery ourselves via
+        # change_contact_path() (CMD_ADD_UPDATE_CONTACT, opcode 0x09), which
+        # the firmware confirms DOES write to the device's contact table
+        # (examples/companion_radio/MyMesh.cpp, CMD_ADD_UPDATE_CONTACT
+        # handler: updateContactFromFrame() + dirty_contacts_expiry). This
+        # also updates our own local contact dict in place (get_contact_by_
+        # key_prefix returns a live reference, not a copy), so there's no
+        # need for a separate re-fetch afterward.
+        #
         # A single send_path_discovery_sync() call is one flood-out-and-wait
         # round trip; losing that one broadcast (or its response) on a real
         # lossy LoRa link is ordinary. Retry a few times back-to-back before
@@ -1298,7 +1337,6 @@ class MeshCore_Dynamic_Interface(Interface):
         # how the official MeshCore client retries a real message send
         # multiple times rather than giving up after one attempt.
         res      = None
-        updated  = None
         resolved = False
         attempts = max(1, self._path_discovery_quick_attempts)
         for attempt in range(1, attempts + 1):
@@ -1306,24 +1344,51 @@ class MeshCore_Dynamic_Interface(Interface):
                 contact, timeout
             )
 
-            # ensure_contacts() only actually re-fetches when follow=True is
-            # passed and the library's internal dirty flag is set (see
-            # meshcore.MeshCore.ensure_contacts) -- without follow=True this
-            # is a silent no-op once contacts have been fetched once, which
-            # would leave `updated` below reading the stale pre-discovery
-            # contact.
-            await self._mc.ensure_contacts(follow=True)
-
-            updated  = self._mc.get_contact_by_key_prefix(key)
-            resolved = bool(updated) and updated.get("out_path_len", -1) not in (-1, None)
-
-            RNS.log(
-                f"PATH DISCOVERY AFTER (attempt {attempt}/{attempts}): "
-                f"result={res} "
-                f"out_path_len={updated.get('out_path_len') if updated else None} "
-                f"out_path={updated.get('out_path') if updated else None}",
-                RNS.LOG_INFO
-            )
+            # A non-None result here means the firmware's isValidPathLen()
+            # check passed on both path directions -- see MyMesh.cpp's
+            # onContactPathRecv() special-case branch, which only sends the
+            # PATH_DISCOVERY_RESPONSE frame at all when that check succeeds.
+            # So getting a result here IS a genuinely resolved path, not a
+            # maybe.
+            if res is not None:
+                out_path      = res.payload.get("out_path")
+                out_path_len  = res.payload.get("out_path_len")
+                out_hash_len  = res.payload.get("out_path_hash_len", 1) or 1
+                RNS.log(
+                    f"PATH DISCOVERY AFTER (attempt {attempt}/{attempts}): "
+                    f"resolved out_path_len={out_path_len} out_path={out_path} "
+                    f"-- persisting to device contact table.",
+                    RNS.LOG_INFO
+                )
+                try:
+                    persist_res = await self._mc.commands.change_contact_path(
+                        contact, out_path, path_hash_mode=out_hash_len - 1
+                    )
+                    ET = self._EventType
+                    if persist_res is not None and ET is not None and persist_res.type == ET.ERROR:
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"Discovered a path for {key[:16]}... but the "
+                            f"device rejected persisting it: {persist_res.payload} "
+                            f"-- the official app may still show it as unresolved.",
+                            RNS.LOG_WARNING
+                        )
+                    else:
+                        resolved = True
+                except Exception as exc:
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Discovered a path for {key[:16]}... but failed to "
+                        f"persist it to the device: {exc} -- the official "
+                        f"app may still show it as unresolved.",
+                        RNS.LOG_WARNING
+                    )
+            else:
+                RNS.log(
+                    f"PATH DISCOVERY AFTER (attempt {attempt}/{attempts}): "
+                    f"no response within timeout -- path still unresolved.",
+                    RNS.LOG_INFO
+                )
 
             if resolved:
                 break
@@ -1615,7 +1680,34 @@ class MeshCore_Dynamic_Interface(Interface):
                     self._delayed_bind_response()
                 )
 
-    def _bind_meshcore_contact(self, contact):
+    def _log_path_if_changed(self, key: str, contact: dict, source: str) -> None:
+        """Log MeshCore's own reported path for a peer whenever it actually
+        changes, so it's possible to see from the logs alone whether path
+        updates are arriving at all (vs. what routing decisions merely
+        assume the path is). Called both from contact-update events
+        (NEW_CONTACT/CONTACTS/CONTACTS_FULL/PATH_UPDATE/ADVERTISEMENT) and
+        from the periodic contact refresh loop's resulting CONTACTS event."""
+        if "out_path_len" not in contact:
+            return
+
+        out_path_len = contact.get("out_path_len")
+        out_path     = contact.get("out_path")
+        current      = (out_path_len, out_path)
+
+        with self._peer_lock:
+            previous = self._peer_last_path.get(key)
+            if previous == current:
+                return
+            self._peer_last_path[key] = current
+
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Path for {key[:16]}... changed via {source}: "
+            f"{previous} -> out_path_len={out_path_len} out_path={out_path}.",
+            RNS.LOG_INFO
+        )
+
+    def _bind_meshcore_contact(self, contact, source: str = "contact event"):
         if not isinstance(contact, dict):
             return
 
@@ -1629,6 +1721,8 @@ class MeshCore_Dynamic_Interface(Interface):
         key = str(key).strip()
         if not key:
             return
+
+        self._log_path_if_changed(key, contact, source)
 
         cap_value = contact.get("can_route", True)
         if isinstance(cap_value, str):
@@ -1649,16 +1743,17 @@ class MeshCore_Dynamic_Interface(Interface):
             self._register_peer_binding(name, key, cap_value)
 
     async def _on_meshcore_contact_event(self, event):
+        source = str(getattr(event, "type", "contact event"))
         payload = getattr(event, "payload", None)
         if isinstance(payload, dict):
             if any(key in payload for key in ("public_key", "pubkey", "peer_pubkey", "node_pubkey")):
-                self._bind_meshcore_contact(payload)
+                self._bind_meshcore_contact(payload, source)
             else:
                 for contact in payload.values():
-                    self._bind_meshcore_contact(contact)
+                    self._bind_meshcore_contact(contact, source)
         elif isinstance(payload, (list, tuple, set)):
             for contact in payload:
-                self._bind_meshcore_contact(contact)
+                self._bind_meshcore_contact(contact, source)
 
     def _resolve_sender_key(self, key_str: str) -> str:
         if not key_str:
@@ -2067,9 +2162,20 @@ class MeshCore_Dynamic_Interface(Interface):
             route = [("channel", None)]
         else:
             assert target_key is not None
+            # Re-fetch fresh rather than trusting a `contact` variable that
+            # may have been set several branches up (or not at all, in the
+            # unlikely case self._mc was falsy above) -- this is a log line,
+            # not a routing decision, so it should reflect exactly what
+            # MeshCore's cache holds for this peer right now.
+            _log_contact = self._mc.get_contact_by_key_prefix(target_key) if self._mc else None
+            _path_desc = (
+                f"out_path_len={_log_contact.get('out_path_len')} "
+                f"out_path={_log_contact.get('out_path')}"
+                if _log_contact is not None else "no cached contact"
+            )
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Routing -> DIRECT via peer key {target_key[:12]}...",
+                f"Routing -> DIRECT via peer key {target_key[:12]}... [{_path_desc}]",
                 RNS.LOG_INFO
             )
             route = [("direct", target_key)]
