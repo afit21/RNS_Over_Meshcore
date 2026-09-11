@@ -304,10 +304,10 @@ Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better 
 
 |     | Direct     | 1x Repeater | 2x Repeater |
 |-----|-----------|-----------------|------|
-| MeshChat DM (3 Total RNS Hops) | Working | Working | Unreliable |
-| MeshChat DM (6 Total RNS Hops) | Working | Working | Unreliable |
-| NomadNet (3 Total RNS Hops)| Working | Working | Not working |
-| NomadNet (5 Total RNS Hops)| Working | Working | Not working |
+| MeshChat DM (3 Total RNS Hops) | Working | Working | Not tested |
+| MeshChat DM (6 Total RNS Hops) | Working | Working | Not tested |
+| NomadNet (3 Total RNS Hops)| Working | Working | Not tested |
+| NomadNet (5 Total RNS Hops)| Working | Working | Not tested |
 
 - The `1x Repeater` column was retested after adding independent direct/channel queues, priority queueing, stale-fragment dropping, path-discovery persistence, and stale-path reset-to-flood — all previously "slow"/"not working" cases over a single repeater are now working reliably. `2x Repeater` hasn't been retested against these fixes yet.
 - This interface is built and tested against a specific `meshcore` library API surface; firmware/library version drift may require updates to event/attribute names.
