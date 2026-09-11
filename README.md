@@ -1,8 +1,6 @@
-# MeshCore Dynamic Interface
+# Reticulum (RNS) over MeshCore Interface
 
-A packet aware [Reticulum Network Stack (RNS)](https://reticulum.network/) custom interface that tunnels RNS traffic over a [MeshCore](https://meshcore.co.uk/) LoRa mesh. It requires no static remote-node configuration — peers discover each other dynamically over the air — and uses a hybrid channel-broadcast / unicast-direct routing strategy to keep airtime usage on a shared, half-duplex LoRa channel as low as possible.
-
-RNS ships interfaces for TCP, serial, I2P, packet radio, and a handful of others, but nothing that speaks directly to MeshCore firmware. This interface fills that gap: it fragments and re-assembles RNS binary packets into MeshCore channel/direct messages, and layers a lightweight peer-discovery and routing protocol on top so that Reticulum can run natively over a MeshCore LoRa network — including in mixed deployments where a MeshCore mesh acts as the "last mile" for an existing RNS transport backbone.
+A packet aware [Reticulum Network Stack (RNS)](https://reticulum.network/) interface that tunnels RNS traffic over a [MeshCore](https://meshcore.co.uk/) LoRa mesh. It requires no static remote-node configuration — peers discover each other dynamically over the air — and uses a hybrid channel-broadcast / unicast-direct routing strategy to keep airtime usage on a shared, half-duplex LoRa channel as low as possible.
 
 > [!NOTE]
 > This is my fork of [comms-engineer's RNS_Over_Meshcore](https://github.com/comms-engineer/RNS_Over_Meshcore). Both this project, and the source project make use of AI.
@@ -10,7 +8,17 @@ RNS ships interfaces for TCP, serial, I2P, packet radio, and a handful of others
 > [!WARNING]
 > This project is currently in an early experimental state and will not run reliably. Documentation may not be up to date
 
+## Credits
+[comms-engineer's RNS_Over_Meshcore](https://github.com/comms-engineer/RNS_Over_Meshcore) - project that this repo is forked from.
+
+[Reticulum Network Stack (RNS)](https://reticulum.network/) - Self explanatory 
+
+[meshcore_py](https://github.com/meshcore-dev/meshcore_py) - MeshCore API dependency
+
+[Meshcore CLI](https://github.com/meshcore-dev/meshcore-cli) - Used this as reference for implementation of meshcore_py calls
+
 ## Project Goals
+RNS ships interfaces for TCP, serial, I2P, packet radio, and a handful of others, but nothing that speaks directly to MeshCore firmware. This interface fills that gap: it fragments and re-assembles RNS binary packets into MeshCore channel/direct messages, and layers a lightweight peer-discovery and routing protocol on top so that Reticulum can run natively over a MeshCore LoRa network — including in mixed deployments where a MeshCore mesh acts as the "last mile" for an existing RNS transport backbone.
 ### Respect for MeshCore users
 This project aims to use the existing Lora infrastructure built by MeshCore users in a way that is respectful. The interface should function well without flooding a MeshCore mesh by intelligently drop or delaying traffic and making the most out of any airtime used.
 
@@ -41,20 +49,9 @@ Ideally, no config options other than mode & radio settings should be required t
 | Compatibility other RNS over MeshCore interfaces | Planned | Support discovery & compatibility with other MeshCore interfaces where possible |
 | Announce Priority By RNS Hop Count | Planned | On Transfer Nodes; cache and queue announces for Reticulum nodes and prioritise based on hop count. |
 
-## Field Tests
+## Getting Started
 
-Just so you have realistic expectations :)
-
-Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better testing methodology, this is what you get. Keep in mind, a connection over Meshcore only counts as one hop, regardless of the amount of repeaters.
-
-|     | Direct     | 1x Repeater | 2x Repeater |
-|-----|-----------|-----------------|------|
-| MeshChat DM (3 Total RNS Hops) | Working | slow | Unreliable |
-| MeshChat DM (6 Total RNS Hops) | Working | slow | Unreliable |
-| NomadNet (3 Total RNS Hops)| Working | Not working | Not working |
-| NomadNet (5 Total RNS Hops)| Working | Not working | Not working |
-
-## Requirements
+### Requirements
 
 - Python 3.9+
 - [Reticulum (`rns`)](https://pypi.org/project/rns/)
@@ -65,14 +62,14 @@ Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better 
 pip install rns meshcore
 ```
 
-## Installation
+### Installation
 
 1. Copy `MeshCore_Dynamic_Interface.py` into your Reticulum config's `interfaces` directory (typically `~/.reticulum/interfaces/`).
 2. Add an interface block to `~/.reticulum/config` (see [Configuration](#configuration) below).
 3. Restart `rnsd`, or reload interfaces if your setup supports it.
 4. Every node participating in the same tunnel must use the same `channel_idx`, `channel_name`, and `channel_secret`.
 
-## Configuration
+### Configuration
 
 Every node needs at minimum a transport block and matching channel identity. A full infrastructure/transport-node example:
 
@@ -259,6 +256,20 @@ A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — 
 
 - MeshCore's channel-message character limit varies by firmware build and must be accounted for when choosing `payload_size` (see [Payload size](#payload-size)).
 - `access_point` mode suppresses announce re-broadcasting but not `DATA`+`PLAIN` path requests; a node that flaps offline can still generate path-request traffic on the LoRa channel from remote nodes searching for it. Use `outgoing_path_req_rate` to bound this.
+
+
+## Field Tests
+
+Just so you have realistic expectations :)
+
+Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better testing methodology, this is what you get. Keep in mind, a connection over Meshcore only counts as one hop, regardless of the amount of repeaters.
+
+|     | Direct     | 1x Repeater | 2x Repeater |
+|-----|-----------|-----------------|------|
+| MeshChat DM (3 Total RNS Hops) | Working | slow | Unreliable |
+| MeshChat DM (6 Total RNS Hops) | Working | slow | Unreliable |
+| NomadNet (3 Total RNS Hops)| Working | Not working | Not working |
+| NomadNet (5 Total RNS Hops)| Working | Not working | Not working |
 - This interface is built and tested against a specific `meshcore` library API surface; firmware/library version drift may require updates to event/attribute names.
 
 Yes, I absolutely had help from Claude on this. I'm not a software person, I'm just stubborn enough to think I can beat my head against something until it works. PLEASE feel free to offer improvements and corrections.
