@@ -1,22 +1,51 @@
 # MeshCore Dynamic Interface
 
-A [Reticulum Network Stack (RNS)](https://reticulum.network/) custom interface that tunnels RNS traffic over a [MeshCore](https://meshcore.co.uk/) LoRa mesh. It requires no static remote-node configuration — peers discover each other dynamically over the air — and uses a hybrid channel-broadcast / unicast-direct routing strategy to keep airtime usage on a shared, half-duplex LoRa channel as low as possible.
-
-## Why this exists
+A packet aware [Reticulum Network Stack (RNS)](https://reticulum.network/) custom interface that tunnels RNS traffic over a [MeshCore](https://meshcore.co.uk/) LoRa mesh. It requires no static remote-node configuration — peers discover each other dynamically over the air — and uses a hybrid channel-broadcast / unicast-direct routing strategy to keep airtime usage on a shared, half-duplex LoRa channel as low as possible.
 
 RNS ships interfaces for TCP, serial, I2P, packet radio, and a handful of others, but nothing that speaks directly to MeshCore firmware. This interface fills that gap: it fragments and re-assembles RNS binary packets into MeshCore channel/direct messages, and layers a lightweight peer-discovery and routing protocol on top so that Reticulum can run natively over a MeshCore LoRa network — including in mixed deployments where a MeshCore mesh acts as the "last mile" for an existing RNS transport backbone.
 
+> [!NOTE]
+> This is my fork of [comms-engineer's RNS_Over_Meshcore](https://github.com/comms-engineer/RNS_Over_Meshcore). Both this project, and the source project make use of AI.
+
+> [!WARNING]
+> This project is currently in an early experimental state and will not run reliably. Documentation may not be up to date
+
+## Project Goals
+### Respect for MeshCore users
+This project aims to use the existing Lora infrastructure built by MeshCore users in a way that is respectful. The interface should function well without flooding a MeshCore mesh by intelligently drop or delaying traffic and making the most out of any airtime used.
+
+### Reliability & Ease of use
+The current Reticulum landscape requires a certain level of tech literacy to setup and use. This project aims to remove the tinkering that may be required to get a similar solution working.
+Ideally, no config options other than mode & radio settings should be required to setup.
+
 ## Features
 
-- **Z85 Encoding** (instead of Base64). Other interfaces seem to use Base64 encoding to parse reticulum packets through Meshcore messages. Z85 theoretically expands data by 25% compared to 33% when using base64
-- **Zero static config peer discovery** — nodes find each other with a demand-driven `RNSBIND_REQ` / `RNSBIND` handshake instead of periodic broadcast, based on the RFC 2236 (IGMP) report-suppression pattern to avoid response storms on a shared channel.
-- **Hybrid routing** — channel broadcast for announces/discovery, unicast direct messages for established peer-to-peer sessions, with automatic fallback from direct to channel if a unicast send fails or goes unacknowledged.
-- **RNS Link ID aware routing** — correctly follows Reticulum's ephemeral Link ID once a Link handshake completes, deriving the destination hash locally so routing doesn't break mid-session.
-- **Capability-aware discovery** — peers advertise whether they can carry transit traffic (`R` router / `E` edge) at discovery time, useful for distinguishing infrastructure nodes from battery-powered edge devices.
-- **Delivery-aware direct sends** — waits on the MeshCore firmware's `expected_ack` / `ACK` event pair for unicast messages rather than trusting the immediate `MSG_SENT` result, with a bounded timeout so a single slow/flood-mode peer can't stall the shared outgoing queue.
-- **Configurable fragmentation** — RNS packets are split into MeshCore-message-sized fragments with a compact 6-byte binary header, sized to fit under firmware channel-message character limits.
-- **Rate limiting** — independent throttles for outgoing announces, path requests, and (optionally) a hard bitrate cap, to keep the interface well-behaved on congested or bandwidth-constrained channels.
-- **Multiple transports** — connects to the MeshCore node over serial, TCP, or BLE.
+- **Planned** - not yet being worked on
+- **Unstable** - Feature implemented but unreliable in basic testing
+- **Basic** - Only a basic version of this feature has been implemented.
+- **Working** - Feature implemented and seemingly working but only lightly tested
+- **Battle Tested** - Feature implemented, highly confident in feature after testing in real scenarios
+
+| Feature    | State     | Description            |
+|------------|-----------|------------------------|
+| Hybrid routing (Chanel & Direct) | Unstable | The interface caches which RNS links belong to which MeshCore contact. This allows traffic to be sent directly instead of flooding all traffic. |
+| Automatic Peer Discovery | Battle Tested | The interface discovers any peers set to the same MeshCore channel and private key. |
+| Z85 Encode/Decode | Battle Tested | Instead of Base64, Z85 encoding is used to parse reticulum packets through MeshCore messages. Z85 theoretically expands data by 25% compared to 33% when using base64|
+| Zero static config peer discovery | Battle Tested | nodes find each other with a demand-driven `RNSBIND_REQ` / `RNSBIND` handshake instead of periodic broadcast, based on the RFC 2236 (IGMP) report-suppression pattern to avoid |
+| Capability-aware discovery | Working | peers advertise whether they can carry transit traffic (`R` router / `E` edge) at discovery time, useful for distinguishing infrastructure nodes from battery-powered edge devices.|
+| Automatic Packet Fragmentation | Basic | Fragments Reticulum packets into MeshCore sized messages. Determines the optimal size of fragments to be sent over MeshCore |
+| Multiple transports | Working | connects to the MeshCore node over serial, TCP, or BLE. |
+| Rate limiting | Basic | independent throttles for outgoing announces, path requests, and (optionally) a hard bitrate cap, to keep the interface well-behaved on congested or bandwidth-constrained channels. - Plans to deprecate rate limiting in favor of an automatic solution |
+| Delivery aware sending | Working | waits on the MeshCore firmware's `expected_ack` / `ACK` event pair for unicast messages rather than trusting the immediate `MSG_SENT` result, with a bounded timeout so a single slow/flood-mode peer can't stall the shared outgoing queue. |
+
+## Field Tests
+
+Just so you have realistic expectations :)
+
+|     | Direct     | 1x Repeater | 2x Repeater |
+|-----|-----------|-----------------|------|
+| MeshChat DM | Working | Working (slow) | Working (slow) |
+| NomadNet | Working (slow) | Not working | Not working |
 
 ## Requirements
 
@@ -76,7 +105,6 @@ Every node needs at minimum a transport block and matching channel identity. A f
     # Channel — all nodes on the same tunnel must share these values
     channel_idx = 0
     channel_name = RNSTunnel
-    channel_secret = <32 hex chars>   # openssl rand -hex 16
 
     # Radio overrides — all four must be non-zero to take effect.
     # Leave commented to use the values already stored on the MeshCore node.
