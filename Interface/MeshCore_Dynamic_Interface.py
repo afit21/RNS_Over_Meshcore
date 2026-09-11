@@ -452,6 +452,17 @@ class MeshCore_Dynamic_Interface(Interface):
         # than immediately escalating to a broadcast CHANNEL resend.
         self.direct_send_attempts = int(cfg.get("direct_send_attempts", 3))
 
+        # Number of consecutive fully-exhausted DIRECT sends (each already
+        # having used up direct_send_attempts above) against the SAME cached
+        # path before we give up trusting that path and reset it to flood
+        # mode instead. Verified empirically: a path that's gone stale
+        # (repeater repositioned, shorter route now available) can fail
+        # 100% of the time while remaining stuck in the contact table, and
+        # resetting it to flood mode measurably outperforms continuing to
+        # retry it -- see reset_path usage in _async_outgoing_worker. Set to
+        # 0 to disable (never auto-reset a cached path).
+        self.direct_path_reset_threshold = int(cfg.get("direct_path_reset_threshold", 2))
+
         # Default adjusted to 300s (5 minutes) for high-latency meshes
         self.fragment_timeout_s = float(cfg.get("fragment_timeout", 300.0))
         self.rate_limit_bps     = int(cfg.get("rate_limit", 0))
@@ -658,6 +669,17 @@ class MeshCore_Dynamic_Interface(Interface):
         # (base/max/factor are set from config above in __init__)
         self._path_req_failures = {}   # target_key -> consecutive failure count
         self._path_req_lock     = threading.Lock()
+
+        # Separate from the above: tracks consecutive DIRECT send failures
+        # against a peer's CURRENTLY CACHED path specifically (not path
+        # discovery attempts). Verified empirically that a cached path can
+        # go stale (repeater repositioned, shorter route now exists) while
+        # remaining stuck in the contact table, and that repeatedly retrying
+        # a stale path fails far more often than just resetting it back to
+        # flood mode and letting the firmware find whatever route currently
+        # works. Reset to 0 the moment a DIRECT send succeeds. See
+        # direct_path_reset_threshold in __init__.
+        self._direct_path_failures = {}   # target_key -> consecutive DIRECT failure count
 
         self._loop = asyncio.new_event_loop()
         assert self._loop is not None
@@ -2453,6 +2475,14 @@ class MeshCore_Dynamic_Interface(Interface):
 
                     if not ack_received:
                         raise last_exc
+
+                    # A successful DIRECT delivery means whatever path is
+                    # currently cached for this peer is working -- clear any
+                    # accumulated failure count so a future blip doesn't
+                    # inherit credit toward resetting a path that just proved
+                    # itself fine.
+                    with self._path_req_lock:
+                        self._direct_path_failures.pop(target, None)
                 else:
                     await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
             except Exception as exc:
@@ -2479,6 +2509,38 @@ class MeshCore_Dynamic_Interface(Interface):
                                 if (now - last_req) > cooldown:
                                     self._path_req_timestamps[target] = now
                                     asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
+
+                            # Separate from discovery above: track repeated
+                            # failures against this peer's CURRENTLY CACHED
+                            # path specifically (0-hop or multi-hop -- any
+                            # opl != -1). Verified empirically on a real
+                            # link: a cached path can go stale (repeater
+                            # repositioned, shorter route now exists) while
+                            # remaining stuck in the contact table, and
+                            # continuing to retry a stale path fails far more
+                            # often than resetting it to flood mode and
+                            # letting the firmware find whatever route
+                            # currently works.
+                            if opl != -1 and self.direct_path_reset_threshold > 0:
+                                with self._path_req_lock:
+                                    fail_count = self._direct_path_failures.get(target, 0) + 1
+                                    self._direct_path_failures[target] = fail_count
+                                if fail_count >= self.direct_path_reset_threshold:
+                                    with self._path_req_lock:
+                                        self._direct_path_failures[target] = 0
+                                    RNS.log(
+                                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                                        f"Peer key {target[:12] if target else '?'}... has failed "
+                                        f"{fail_count} consecutive DIRECT send(s) on its cached "
+                                        f"path (out_path_len={opl}) -- resetting to flood mode "
+                                        f"instead of continuing to retry what looks like a stale "
+                                        f"route.",
+                                        RNS.LOG_WARNING
+                                    )
+                                    if self._loop is not None:
+                                        asyncio.run_coroutine_threadsafe(
+                                            self._mc.commands.reset_path(contact), self._loop
+                                        )
                     except Exception:
                         pass
                     RNS.log(
