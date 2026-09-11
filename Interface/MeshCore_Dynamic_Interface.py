@@ -8,7 +8,6 @@ TODO:
     
 
     Core optimisations:
-    - [Big] Split direct and channel queues
     - [Big] Adaptive fragment sizing (get node name, and firmware limit, size the payload accordingly). Adapt fragment size if direct, channel, and based on node names. Save 3 bytes at end for repeater info
     - Make retransmissions fragment-aware (retransmit currently retransmits every fragment, regardless of if some arrived)
     - Replace periodic contact refresh with on direct route failure and/or path length unknown
@@ -491,8 +490,13 @@ class MeshCore_Dynamic_Interface(Interface):
         self._loop        = None
         self._loop_thread = None
         
-        # Thread-safe queue used to decouple synchronous execution from the worker loop
-        self._outqueue    = queue.Queue(maxsize=self.OUTQUEUE_MAXSIZE)
+        # Thread-safe queues used to decouple synchronous execution from the
+        # worker loops. DIRECT and CHANNEL traffic get independent queues (and
+        # independent worker tasks, see _async_outgoing_worker) so a DIRECT
+        # send blocked waiting on a delivery ACK (up to direct_ack_timeout_max_s)
+        # can never stall CHANNEL broadcasts queued behind it, and vice versa.
+        self._direct_outqueue  = queue.Queue(maxsize=self.OUTQUEUE_MAXSIZE)
+        self._channel_outqueue = queue.Queue(maxsize=self.OUTQUEUE_MAXSIZE)
 
         self._own_node_name = ""
         self._own_mc_key    = ""
@@ -700,6 +704,18 @@ class MeshCore_Dynamic_Interface(Interface):
             )
             return
 
+        if self.transport == "serial":
+            conn_desc = f"serial port={self.port} baudrate={self.baudrate}"
+        elif self.transport == "ble":
+            conn_desc = f"ble name={self.ble_name or '<first found>'}"
+        else:
+            conn_desc = f"tcp host={self.host} port={self.tcp_port}"
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Connected to MeshCore device ({conn_desc}).",
+            RNS.LOG_INFO
+        )
+
         if self._mc is None:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -730,6 +746,15 @@ class MeshCore_Dynamic_Interface(Interface):
                     f"key={self._own_mc_key[:16]}... [{cap_label}]",
                     RNS.LOG_INFO
                 )
+            else:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"send_appstart() returned unexpected event type "
+                    f"{getattr(result, 'type', result)!r} instead of SELF_INFO -- "
+                    f"node name/key remain unknown, payload_size auto-adjust "
+                    f"and RNSBIND announcements will not work until this resolves.",
+                    RNS.LOG_WARNING
+                )
         except Exception as exc:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -741,13 +766,36 @@ class MeshCore_Dynamic_Interface(Interface):
                 await self._mc.commands.set_radio(
                     self.radio_freq, self.radio_bw, self.radio_sf, self.radio_cr
                 )
-            except Exception:
-                pass
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Radio override applied: freq={self.radio_freq}MHz "
+                    f"bw={self.radio_bw}kHz sf={self.radio_sf} cr={self.radio_cr}.",
+                    RNS.LOG_INFO
+                )
+            except Exception as exc:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Radio override failed: {exc} -- continuing with the "
+                    f"node's currently stored radio settings.",
+                    RNS.LOG_WARNING
+                )
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"No radio override configured -- using the node's currently "
+                f"stored radio settings.",
+                RNS.LOG_INFO
+            )
 
         try:
             secret_bytes = bytes.fromhex(self.channel_secret_hex)
             await self._mc.commands.set_channel(
                 self.channel_idx, self.channel_name, secret_bytes
+            )
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Channel configured: idx={self.channel_idx} name='{self.channel_name}'.",
+                RNS.LOG_INFO
             )
         except Exception as exc:
             RNS.log(
@@ -766,12 +814,33 @@ class MeshCore_Dynamic_Interface(Interface):
                 try:
                     self._mc.auto_update_contacts = True
                     await self._mc.ensure_contacts()
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Initial contact fetch OK ({len(self._mc.contacts)} "
+                        f"contact(s) known).",
+                        RNS.LOG_INFO
+                    )
                 except Exception as exc:
                     RNS.log(
                         f"MeshCore_Dynamic_Interface [{self.name}]: "
                         f"Initial contact fetch failed: {exc}", RNS.LOG_DEBUG
                     )
-        
+            else:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"meshcore library exposes no send_msg() command -- "
+                    f"DIRECT sends are unavailable, all outgoing traffic "
+                    f"will use CHANNEL.",
+                    RNS.LOG_WARNING
+                )
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"allow_direct=no -- DIRECT sends disabled by config, all "
+                f"outgoing traffic will use CHANNEL.",
+                RNS.LOG_INFO
+            )
+
         def _channel_msg_callback(e) -> None:
             if self._loop is not None:
                 asyncio.run_coroutine_threadsafe(
@@ -789,17 +858,30 @@ class MeshCore_Dynamic_Interface(Interface):
                     self._on_meshcore_contact_event(event), self._loop
                 )
 
+        _bound_contact_ets = []
         for _name in ("NEW_CONTACT", "CONTACTS", "CONTACTS_FULL",
                       "PATH_UPDATE", "ADVERTISEMENT"):
             _contact_et = getattr(ET, _name, None)
             if _contact_et is not None:
                 self._mc.subscribe(_contact_et, _meshcore_contact_callback)
+                _bound_contact_ets.append(_name)
+        _contact_ets_desc = (
+            ", ".join(_bound_contact_ets) if _bound_contact_ets
+            else "NONE -- peer table will only update from RNSBIND traffic"
+        )
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Contact-update events bound: {_contact_ets_desc}.",
+            RNS.LOG_INFO if _bound_contact_ets else RNS.LOG_WARNING
+        )
 
         _direct_recv_et = None
+        _direct_recv_name = None
         for _name in ("CONTACT_MSG_RECV", "DIRECT_MSG_RECV", "PRIVATE_MSG_RECV",
                       "MSG_RECV", "PRIV_MSG_RECV"):
             _direct_recv_et = getattr(ET, _name, None)
             if _direct_recv_et is not None:
+                _direct_recv_name = _name
                 def _direct_msg_callback(e) -> None:
                     if self._loop is not None:
                         asyncio.run_coroutine_threadsafe(
@@ -813,7 +895,22 @@ class MeshCore_Dynamic_Interface(Interface):
                 break
 
         if _direct_recv_et is None:
+            if self._has_direct_api:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"No recognized direct-message receive event on this "
+                    f"meshcore library -- disabling DIRECT sends (we could "
+                    f"send them, but would never see delivery ACKs or "
+                    f"replies come back). Falling back to CHANNEL-only.",
+                    RNS.LOG_WARNING
+                )
             self._has_direct_api = False
+        elif self.allow_direct and self._has_direct_api:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"DIRECT messaging ENABLED (receive event={_direct_recv_name}).",
+                RNS.LOG_INFO
+            )
 
         for _name in ("ACK", "MSG_ACKED", "MESSAGE_ACKED", "CHAN_ACK"):
             _ack_et = getattr(ET, _name, None)
@@ -830,15 +927,49 @@ class MeshCore_Dynamic_Interface(Interface):
                 )
                 break
 
+        # The DIRECT delivery-confirmation wait in _async_outgoing_worker
+        # references self._EventType.ACK directly (not whichever alias was
+        # matched above), so that's the one that actually has to exist for
+        # ACK-gated direct sends to work at all. If it's missing, every
+        # direct send with an expected_ack will raise AttributeError inside
+        # the worker's try block and get silently treated as a normal send
+        # failure (falling back to CHANNEL) -- which looks like a flaky link
+        # rather than a library incompatibility, so flag it clearly here.
+        if self.allow_direct and self._has_direct_api and getattr(ET, "ACK", None) is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"This meshcore library has no EventType.ACK -- every DIRECT "
+                f"send that expects a delivery ACK will error out and fall "
+                f"back to CHANNEL. If you see repeated 'DIRECT send ... "
+                f"failed' log lines mentioning AttributeError, this is why.",
+                RNS.LOG_WARNING
+            )
+
         await self._mc.start_auto_message_fetching()
 
         asyncio.create_task(self._cleanup_loop())
         asyncio.create_task(self._bind_discovery_loop())
-        asyncio.create_task(self._async_outgoing_worker())
+        asyncio.create_task(self._async_outgoing_worker(self._direct_outqueue))
+        asyncio.create_task(self._async_outgoing_worker(self._channel_outqueue))
         asyncio.create_task(self._contact_refresh_loop())
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Direct and channel outgoing worker tasks started "
+            f"(independent queues, maxsize={self.OUTQUEUE_MAXSIZE} each).",
+            RNS.LOG_INFO
+        )
 
         self.online = True
         self._setup_done.set()
+
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Interface ready -- transport={self.transport} "
+            f"can_route={self.can_route} allow_direct={self.allow_direct} "
+            f"direct_api={self._has_direct_api} payload_size={self.payload_size} "
+            f"peer_ttl={self.peer_ttl_s:.0f}s.",
+            RNS.LOG_INFO
+        )
 
     # -------------------------------------------------------------------------
     # Peer discovery
@@ -1047,23 +1178,7 @@ class MeshCore_Dynamic_Interface(Interface):
             )
 
         return res
-        
-        await self._mc.ensure_contacts()
-        timeout = 0 if not "timeout" in contact else contact["timeout"]
-        res = await self._mc.commands.send_path_discovery_sync(contact, timeout)
-        if res is None:
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Path discovery failed for contact {contact}.",
-                RNS.LOG_WARNING
-            )
-        else:
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Path discovery result for contact {contact}: {res}.",
-                RNS.LOG_INFO
-            )
-    
+
     # -------------------------------------------------------------------------
     # Maintenance
     # -------------------------------------------------------------------------
@@ -1081,6 +1196,15 @@ class MeshCore_Dynamic_Interface(Interface):
                     if ts < frag_deadline
                 ]
                 for k in stale:
+                    sender, pkt_id = k
+                    got, total = len(self._assembly[k]), self._assembly_meta[k][0]
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Dropping incomplete reassembly for pkt_id {pkt_id} "
+                        f"from '{sender}' -- only {got}/{total} fragment(s) "
+                        f"arrived within {self.fragment_timeout_s:.0f}s.",
+                        RNS.LOG_INFO
+                    )
                     del self._assembly[k]
                     del self._assembly_meta[k]
 
@@ -1360,17 +1484,35 @@ class MeshCore_Dynamic_Interface(Interface):
         z85_text = text[len(self.MSG_PREFIX):].strip()
         try:
             raw = z85_decode(z85_text)
-        except Exception:
+        except Exception as exc:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Dropped unparsable {rx_mode} fragment from '{sender}' "
+                f"({len(z85_text)} char(s)): {exc}.",
+                RNS.LOG_DEBUG
+            )
             return
 
         # Header unpacked big-endian matching structural change (1B index, 4B packet ID, 1B total fragments)
         if len(raw) < self.HEADER_SIZE:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Dropped {rx_mode} fragment from '{sender}' -- decoded to "
+                f"{len(raw)}b, shorter than the {self.HEADER_SIZE}b header.",
+                RNS.LOG_DEBUG
+            )
             return
-        
+
         frag_idx, pkt_id, frag_total = struct.unpack(">BIB", raw[:6])
         payload    = raw[self.HEADER_SIZE:]
 
         if frag_total == 0 or frag_idx >= frag_total:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Dropped {rx_mode} fragment from '{sender}' -- invalid "
+                f"header (frag_idx={frag_idx}, frag_total={frag_total}).",
+                RNS.LOG_DEBUG
+            )
             return
 
         key = (sender, pkt_id)
@@ -1380,7 +1522,15 @@ class MeshCore_Dynamic_Interface(Interface):
         with self._seen_lock:
             if key in self._seen_pkts:
                 if now < self._seen_pkts[key]:
-                    return  
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Duplicate pkt_id {pkt_id} from '{sender}' suppressed "
+                        f"(already fully reassembled within the last "
+                        f"{self.DEDUPLICATION_TTL_S:.0f}s -- likely a "
+                        f"retransmit pass or overheard repeat).",
+                        RNS.LOG_DEBUG
+                    )
+                    return
                 else:
                     del self._seen_pkts[key]
 
@@ -1391,6 +1541,13 @@ class MeshCore_Dynamic_Interface(Interface):
                 self._assembly_meta[key] = (frag_total, now)
 
             if frag_idx in self._assembly[key]:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Duplicate fragment idx={frag_idx} for pkt_id {pkt_id} "
+                    f"from '{sender}' ignored (already have it, "
+                    f"{len(self._assembly[key])}/{frag_total} collected).",
+                    RNS.LOG_DEBUG
+                )
                 return
 
             self._assembly[key][frag_idx] = payload
@@ -1630,6 +1787,14 @@ class MeshCore_Dynamic_Interface(Interface):
                         elif now - last_ts < self._path_req_rate_s:
                             # Burst window elapsed and still within the
                             # long-run cooldown -- suppress.
+                            RNS.log(
+                                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                                f"Suppressing outgoing path request for "
+                                f"{dest_id.hex()[:8]} -- {now - last_ts:.0f}s "
+                                f"since last (burst window elapsed, "
+                                f"< {self._path_req_rate_s:.0f}s limit).",
+                                RNS.LOG_INFO
+                            )
                             return
                         else:
                             # Cooldown expired -- this starts a fresh burst.
@@ -1724,26 +1889,29 @@ class MeshCore_Dynamic_Interface(Interface):
             )
             route = [("direct", target_key)]
             
+        # route always holds exactly one (mode, target) pair -- unpack once
+        # rather than re-iterating a single-element list per fragment.
+        mode, target = route[0]
+        outq = self._direct_outqueue if mode == "direct" else self._channel_outqueue
         for frag_str in handler.fragments:
-            for mode, target in route:
-                try:
-                    # Thread-safe blocking put handles backpressure cleanly
-                    queued_at = time.monotonic()
+            try:
+                # Thread-safe blocking put handles backpressure cleanly
+                queued_at = time.monotonic()
 
-                    self._outqueue.put(
-                        (mode, target, frag_str, queued_at, pkt_id),
-                        block=True,
-                        timeout=None
-                    )
+                outq.put(
+                    (mode, target, frag_str, queued_at, pkt_id),
+                    block=True,
+                    timeout=None
+                )
 
-                    RNS.log(
-                        f"[PERF {pkt_id}] QUEUE "
-                        f"depth={self._outqueue.qsize()}",
-                        RNS.LOG_INFO
-                    )
-                    
-                except Exception:
-                    pass
+                RNS.log(
+                    f"[PERF {pkt_id}] QUEUE({mode}) "
+                    f"depth={outq.qsize()}",
+                    RNS.LOG_INFO
+                )
+
+            except Exception:
+                pass
 
         # Schedule extra passes for broadcast-only packet types. Path
         # RESPONSES aren't a distinct packet type in this system -- they're
@@ -1751,12 +1919,20 @@ class MeshCore_Dynamic_Interface(Interface):
         # request (see _path_response_pending above) -- so they're already
         # covered by the announce_retransmit_extra branch below with no
         # separate handling needed.
-        retransmit_extra = self.ordinary_data_retransmit_extra
+        # ordinary_data_retransmit_extra only makes sense for non-broadcast
+        # packets that ended up on the unacknowledged CHANNEL path (e.g. no
+        # bound peer / no resolved route yet). A DIRECT send is already
+        # ACK'd by the firmware (see _async_outgoing_worker), so blindly
+        # retransmitting it too would just double-deliver a packet that's
+        # already confirmed received.
+        retransmit_extra = 0
         if broadcast:
             if ptype == self._RNS_PTYPE_ANNOUNCE:
                 retransmit_extra = self.announce_retransmit_extra
             elif ptype == self._RNS_PTYPE_DATA and dest_type == self._RNS_DTYPE_PLAIN:
                 retransmit_extra = self.path_req_retransmit_extra
+        elif route[0][0] == "channel":
+            retransmit_extra = self.ordinary_data_retransmit_extra
 
         if retransmit_extra > 0 and self._loop is not None:
             asyncio.run_coroutine_threadsafe(
@@ -1767,23 +1943,26 @@ class MeshCore_Dynamic_Interface(Interface):
         self.txb += len(data)
 
     async def _delayed_retransmits(self, fragments, route, count):
+        # route always holds exactly one (mode, target) pair -- unpack once
+        # rather than re-iterating a single-element list per fragment.
+        mode, target = route[0]
+        outq = self._direct_outqueue if mode == "direct" else self._channel_outqueue
         for i in range(count):
             delay = random.uniform(self.retransmit_jitter_min_s, self.retransmit_jitter_max_s)
             await asyncio.sleep(delay)
             if not self.online:
                 return
             for frag_str in fragments:
-                for mode, target in route:
-                    try:
-                        queued_at = time.monotonic()
-                        self._outqueue.put_nowait((mode, target, frag_str, queued_at, None))
-                    except queue.Full:
-                        RNS.log(
-                            f"MeshCore_Dynamic_Interface [{self.name}]: "
-                            f"Retransmit pass {i + 1}/{count} failed to enqueue "
-                            f"({len(fragments)} fragment(s), same pkt_id) -- queue full.",
-                            RNS.LOG_WARNING
-                        )
+                try:
+                    queued_at = time.monotonic()
+                    outq.put_nowait((mode, target, frag_str, queued_at, None))
+                except queue.Full:
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Retransmit pass {i + 1}/{count} failed to enqueue "
+                        f"({len(fragments)} fragment(s), same pkt_id) -- queue full.",
+                        RNS.LOG_WARNING
+                    )
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"Retransmit pass {i + 1}/{count} sent "
@@ -1791,10 +1970,17 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
-    async def _async_outgoing_worker(self):
+    async def _async_outgoing_worker(self, outq):
         """
-        Worker task pulling payload chunks from the thread-safe synchronized queue
-        using the event loop executor pool to preserve pure async interface execution.
+        Worker task pulling payload chunks from one thread-safe synchronized
+        queue using the event loop executor pool to preserve pure async
+        interface execution. Run twice concurrently -- once bound to
+        self._direct_outqueue, once to self._channel_outqueue -- so items
+        already carry a fixed mode ("direct" or "channel") matching the queue
+        they were enqueued on. Keeping the two queues independent means a
+        DIRECT send stuck waiting on a delivery ACK can't stall CHANNEL
+        broadcasts (or other DIRECT sends bound for a different peer, in the
+        case of a stuck channel worker) queued behind it, and vice versa.
         """
         while True:
             if not self.online or self._mc is None or self._loop is None:
@@ -1806,16 +1992,16 @@ class MeshCore_Dynamic_Interface(Interface):
                 continue
 
             # Safe non-blocking cross-thread extraction via run_in_executor
-            item = await self._loop.run_in_executor(None, self._outqueue.get)
-            
+            item = await self._loop.run_in_executor(None, outq.get)
+
             mode, target, frag_str, queued_at, pkt_id = item
             queue_wait = time.monotonic() - queued_at
-                
+
             #Log queue wait time
             RNS.log(
-                f"[PERF {pkt_id if pkt_id is not None else 'unknown'}] DEQUEUE "
+                f"[PERF {pkt_id if pkt_id is not None else 'unknown'}] DEQUEUE({mode}) "
                 f"queue_wait={queue_wait:.3f}s "
-                f"depth={self._outqueue.qsize()}",
+                f"depth={outq.qsize()}",
                 RNS.LOG_INFO
             )
 
@@ -1848,14 +2034,17 @@ class MeshCore_Dynamic_Interface(Interface):
                         # NOTE: for a contact with out_path_len == -1 (no known
                         # route -- flood mode), the firmware's suggested_timeout
                         # can be very large, since it has to budget for a full
-                        # flood-and-wait cycle. _async_outgoing_worker is a
-                        # single task pulling from one shared queue -- an
-                        # uncapped wait here stalls EVERY other queued fragment
-                        # (channel broadcasts, other peers) for however long the
-                        # firmware suggests, which can be minutes. We deliberately
-                        # cap it: our own CHANNEL fallback is cheap, so there's no
-                        # reason to let one flood-mode contact block the whole
-                        # queue for as long as the radio itself would wait.
+                        # flood-and-wait cycle. The DIRECT queue has its own
+                        # worker task (separate from CHANNEL, see
+                        # _async_outgoing_worker) -- an uncapped wait here can
+                        # no longer stall channel broadcasts, but it would
+                        # still stall every other queued DIRECT fragment
+                        # (to this or any other peer) for however long the
+                        # firmware suggests, which can be minutes. We
+                        # deliberately cap it: our own CHANNEL fallback is
+                        # cheap, so there's no reason to let one flood-mode
+                        # contact block the rest of the direct queue for as
+                        # long as the radio itself would wait.
                         raw_ack_timeout = max(
                             self.direct_ack_timeout_s, (suggested_ms / 1000.0) * 1.2
                         )
@@ -1924,11 +2113,19 @@ class MeshCore_Dynamic_Interface(Interface):
                         RNS.LOG_INFO
                     )
                     try:
-                        # Fallback to channel if targeted routing exceptions happen mid-transit
-                        self._outqueue.put_nowait(("channel", None, frag_str, queued_at, pkt_id))
+                        # Fallback to channel if targeted routing exceptions happen
+                        # mid-transit -- always goes to the channel queue regardless
+                        # of which queue this worker instance drains.
+                        self._channel_outqueue.put_nowait(("channel", None, frag_str, queued_at, pkt_id))
                     except queue.Full:
-                        pass
-                self._outqueue.task_done()
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"Channel queue full ({self.OUTQUEUE_MAXSIZE}) -- "
+                            f"dropped fragment {pkt_id if pkt_id is not None else 'unknown'} "
+                            f"on DIRECT->CHANNEL fallback.",
+                            RNS.LOG_WARNING
+                        )
+                outq.task_done()
                 continue
 
             delay = (
@@ -1936,12 +2133,16 @@ class MeshCore_Dynamic_Interface(Interface):
                 if mode == "direct"
                 else self.fragment_delay_s
             )
+            # NOTE: with independent DIRECT/CHANNEL workers, rate_limit_bps is
+            # now enforced per-queue rather than as one combined interface-wide
+            # cap -- each stream paces itself to the configured bps rather than
+            # the two sharing a single budget.
             if self.rate_limit_bps > 0:
                 bits  = (len(frag_str) * 3 // 4) * 8
                 delay = max(delay, bits / self.rate_limit_bps)
 
             await asyncio.sleep(delay)
-            self._outqueue.task_done()
+            outq.task_done()
 
     # -------------------------------------------------------------------------
     # Inbound delivery
