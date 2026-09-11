@@ -245,6 +245,7 @@ import RNS
 from RNS.Interfaces.Interface import Interface
 import asyncio
 import hashlib
+import itertools
 import struct
 import queue
 import random
@@ -329,6 +330,17 @@ class MeshCore_Dynamic_Interface(Interface):
     _RNS_DTYPE_GROUP  = 0x01
     _RNS_DTYPE_PLAIN  = 0x02
     _RNS_DTYPE_LINK   = 0x03
+
+    # Outgoing queue priority tiers (lower value = dequeued first, see
+    # queue.PriorityQueue in __init__). LINK_REQUEST and PROOF packets are
+    # small, latency-sensitive handshake/acknowledgement traffic -- RNS's own
+    # Link establishment timeout is only a handful of seconds per hop, so if
+    # one of these gets stuck behind a bulk data burst in a FIFO queue, RNS
+    # gives up before the packet even goes out. Bumping them ahead of
+    # ordinary DATA (and ANNOUNCE, which isn't latency-sensitive the same
+    # way) fixes that without needing to send anything faster overall.
+    _PRIORITY_HANDSHAKE = 0
+    _PRIORITY_NORMAL    = 1
 
     _RNS_MAP_MAX = 512
     
@@ -492,7 +504,28 @@ class MeshCore_Dynamic_Interface(Interface):
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
         self.ordinary_data_retransmit_extra = int(cfg.get("ordinary_data_retransmit_extra", 0))
-        
+
+        # A fragment is dropped instead of transmitted only when BOTH of the
+        # following hold: it has sat in its outgoing queue longer than
+        # stale_fragment_max_age, AND the queue is still backed up behind it
+        # (at least stale_fragment_min_queue_depth items waiting). Age alone
+        # isn't a good enough signal -- a fragment that's simply had bad luck
+        # on an otherwise quiet queue will get sent in a moment regardless,
+        # and dropping it would gain nothing. It's only worth sacrificing a
+        # fragment when there's an actual backlog to relieve behind it.
+        # RNS's own Link establishment timeout is typically a few multiples
+        # of DEFAULT_PER_HOP_TIMEOUT (6s/hop) -- well under a minute for
+        # anything but a many-hop path -- so a fragment still unsent after
+        # stale_fragment_max_age, with a real backlog behind it, is very
+        # unlikely to still be wanted, and sending it anyway only delays
+        # everything queued behind it further. Broadcast packets (ANNOUNCE /
+        # path request) are exempt regardless: they have no single
+        # "requester" to give up, and a late one is still useful
+        # network-wide, unlike a stale reply/data fragment tied to one
+        # already-abandoned Link. Set stale_fragment_max_age to 0 to disable
+        # this entirely.
+        self.stale_fragment_max_age_s = float(cfg.get("stale_fragment_max_age", 30.0))
+        self.stale_fragment_min_queue_depth = int(cfg.get("stale_fragment_min_queue_depth", 10))
 
         # --- Routing capability --------------------------------------------
         self.can_route = (
@@ -535,8 +568,22 @@ class MeshCore_Dynamic_Interface(Interface):
         # independent worker tasks, see _async_outgoing_worker) so a DIRECT
         # send blocked waiting on a delivery ACK (up to direct_ack_timeout_max_s)
         # can never stall CHANNEL broadcasts queued behind it, and vice versa.
-        self._direct_outqueue  = queue.Queue(maxsize=self.OUTQUEUE_MAXSIZE)
-        self._channel_outqueue = queue.Queue(maxsize=self.OUTQUEUE_MAXSIZE)
+        #
+        # Both are PriorityQueues rather than plain FIFOs: LINK_REQUEST and
+        # PROOF packets (see _PRIORITY_HANDSHAKE below) jump ahead of ordinary
+        # DATA already waiting in line. Without this, a link establishment
+        # attempt that arrives mid-burst of a bulk transfer would sit behind
+        # the entire backlog -- easily the multi-minute waits seen during
+        # testing -- and RNS would very likely give up on the Link before its
+        # request packet ever went out. Items are (priority, seq, payload)
+        # tuples; seq is a unique, always-comparable tie-breaker (see
+        # _outqueue_seq) so same-priority items still drain in FIFO order
+        # and Python's tuple comparison never has to fall through to payload
+        # fields that might not be mutually comparable (e.g. pkt_id can be
+        # None for retransmits).
+        self._direct_outqueue  = queue.PriorityQueue(maxsize=self.OUTQUEUE_MAXSIZE)
+        self._channel_outqueue = queue.PriorityQueue(maxsize=self.OUTQUEUE_MAXSIZE)
+        self._outqueue_seq = itertools.count()
 
         self._own_node_name = ""
         self._own_mc_key    = ""
@@ -2031,20 +2078,33 @@ class MeshCore_Dynamic_Interface(Interface):
         # rather than re-iterating a single-element list per fragment.
         mode, target = route[0]
         outq = self._direct_outqueue if mode == "direct" else self._channel_outqueue
+
+        # LINK_REQUEST and PROOF jump ahead of ordinary DATA/ANNOUNCE already
+        # waiting in the queue -- see _PRIORITY_HANDSHAKE for rationale.
+        priority = (
+            self._PRIORITY_HANDSHAKE
+            if ptype in (self._RNS_PTYPE_LINK_REQ, self._RNS_PTYPE_PROOF)
+            else self._PRIORITY_NORMAL
+        )
+
         for frag_str in handler.fragments:
             try:
                 # Thread-safe blocking put handles backpressure cleanly
                 queued_at = time.monotonic()
 
                 outq.put(
-                    (mode, target, frag_str, queued_at, pkt_id),
+                    (
+                        priority,
+                        next(self._outqueue_seq),
+                        (mode, target, frag_str, queued_at, pkt_id, broadcast),
+                    ),
                     block=True,
                     timeout=None
                 )
 
                 RNS.log(
                     f"[PERF {pkt_id}] QUEUE({mode}) "
-                    f"depth={outq.qsize()}",
+                    f"priority={priority} depth={outq.qsize()}",
                     RNS.LOG_INFO
                 )
 
@@ -2074,13 +2134,13 @@ class MeshCore_Dynamic_Interface(Interface):
 
         if retransmit_extra > 0 and self._loop is not None:
             asyncio.run_coroutine_threadsafe(
-                self._delayed_retransmits(handler.fragments, route, retransmit_extra),
+                self._delayed_retransmits(handler.fragments, route, retransmit_extra, broadcast, priority),
                 self._loop
             )
 
         self.txb += len(data)
 
-    async def _delayed_retransmits(self, fragments, route, count):
+    async def _delayed_retransmits(self, fragments, route, count, broadcast, priority):
         # route always holds exactly one (mode, target) pair -- unpack once
         # rather than re-iterating a single-element list per fragment.
         mode, target = route[0]
@@ -2093,7 +2153,11 @@ class MeshCore_Dynamic_Interface(Interface):
             for frag_str in fragments:
                 try:
                     queued_at = time.monotonic()
-                    outq.put_nowait((mode, target, frag_str, queued_at, None))
+                    outq.put_nowait((
+                        priority,
+                        next(self._outqueue_seq),
+                        (mode, target, frag_str, queued_at, None, broadcast),
+                    ))
                 except queue.Full:
                     RNS.log(
                         f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -2130,18 +2194,53 @@ class MeshCore_Dynamic_Interface(Interface):
                 continue
 
             # Safe non-blocking cross-thread extraction via run_in_executor
-            item = await self._loop.run_in_executor(None, outq.get)
+            priority, _seq, item = await self._loop.run_in_executor(None, outq.get)
 
-            mode, target, frag_str, queued_at, pkt_id = item
-            queue_wait = time.monotonic() - queued_at
+            mode, target, frag_str, queued_at, pkt_id, broadcast = item
+            queue_wait   = time.monotonic() - queued_at
+            depth_behind = outq.qsize()
 
             #Log queue wait time
             RNS.log(
                 f"[PERF {pkt_id if pkt_id is not None else 'unknown'}] DEQUEUE({mode}) "
-                f"queue_wait={queue_wait:.3f}s "
-                f"depth={outq.qsize()}",
+                f"priority={priority} queue_wait={queue_wait:.3f}s "
+                f"depth={depth_behind}",
                 RNS.LOG_INFO
             )
+
+            # Age alone isn't a good enough reason to drop a fragment -- one
+            # that's simply had bad luck on an otherwise quiet queue will get
+            # sent in a moment regardless, and dropping it gains nothing.
+            # Only sacrifice it when there's an ACTUAL backlog behind it too
+            # (depth_behind, i.e. how many items are still waiting once this
+            # one is removed): that's the case where continuing to send it
+            # anyway is genuinely costing everything queued after it more
+            # time, and where the RNS-level request/Link that created it
+            # (RNS's own Link establishment timeout is typically a handful
+            # of seconds per hop -- see stale_fragment_max_age in __init__)
+            # has, in all likelihood, already given up. Broadcast packets
+            # are exempt regardless -- they have no single requester to give
+            # up, and a late announce/path-response is still useful
+            # network-wide.
+            if (
+                not broadcast
+                and self.stale_fragment_max_age_s > 0
+                and queue_wait > self.stale_fragment_max_age_s
+                and depth_behind >= self.stale_fragment_min_queue_depth
+            ):
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Dropping stale {mode} fragment for pkt_id "
+                    f"{pkt_id if pkt_id is not None else 'unknown'} -- sat "
+                    f"{queue_wait:.1f}s in queue (> "
+                    f"{self.stale_fragment_max_age_s:.0f}s max age) with "
+                    f"{depth_behind} item(s) still backed up behind it "
+                    f"(>= {self.stale_fragment_min_queue_depth}); the "
+                    f"requester has very likely already given up.",
+                    RNS.LOG_INFO
+                )
+                outq.task_done()
+                continue
 
             try:
                 if mode == "direct":
@@ -2286,8 +2385,16 @@ class MeshCore_Dynamic_Interface(Interface):
                     try:
                         # Fallback to channel if targeted routing exceptions happen
                         # mid-transit -- always goes to the channel queue regardless
-                        # of which queue this worker instance drains.
-                        self._channel_outqueue.put_nowait(("channel", None, frag_str, queued_at, pkt_id))
+                        # of which queue this worker instance drains. broadcast is
+                        # always False here: only non-broadcast packets ever route
+                        # DIRECT in the first place (see _is_broadcast_packet).
+                        # priority carries over unchanged -- it's the same
+                        # original packet, just switching transport mode.
+                        self._channel_outqueue.put_nowait((
+                            priority,
+                            next(self._outqueue_seq),
+                            ("channel", None, frag_str, queued_at, pkt_id, broadcast),
+                        ))
                     except queue.Full:
                         RNS.log(
                             f"MeshCore_Dynamic_Interface [{self.name}]: "
