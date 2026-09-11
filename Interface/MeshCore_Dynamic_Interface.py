@@ -192,10 +192,13 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
   │     auto_reconnect = yes         # try to recover a dropped link       │
   │     max_reconnect_attempts = 3   # give up after this many tries       │
   │                                                                         │
-  │     # Channel — all nodes on the same tunnel must share these values   │
-  │     channel_idx = 0                                                     │
-  │     channel_name = RNSTunnel                                            │
-  │     channel_secret = <32 hex chars>  # openssl rand -hex 16           │
+  │     # Channel — defaults join a shared public channel with zero         │
+  │     # coordination needed. RNS already encrypts/authenticates your      │
+  │     # traffic end-to-end, so a shared default here isn't a security     │
+  │     # concern. Uncomment to run your own private channel instead.       │
+  │     # channel_idx = 0                                                   │
+  │     # channel_name = RNSTunnel                                          │
+  │     # channel_secret = <32 hex chars>  # openssl rand -hex 16           │
   │                                                                         │
   │     # Radio overrides — all four must be non-zero to take effect.      │
   │     # Leave commented to use the values stored on the MeshCore node.   │
@@ -392,10 +395,26 @@ class MeshCore_Dynamic_Interface(Interface):
         self.max_reconnect_attempts = int(cfg.get("max_reconnect_attempts", 3))
 
         # --- Channel identity ----------------------------------------------
-        self.channel_idx        = int(str(cfg.get("channel_idx", 0)).strip())
-        self.channel_name       = cfg.get("channel_name", "RNSTunnel")
-        self.channel_secret_hex = cfg.get("channel_secret",
-                                          "10000000000000000000000000000000")
+        # Defaults join a shared, public "RNSTunnel" channel so that two
+        # nodes running this interface with no channel config at all can
+        # find each other with zero coordination. This is deliberate, not
+        # an oversight: RNS already encrypts and authenticates the actual
+        # application data end-to-end, so a shared, publicly-known MeshCore
+        # channel secret doesn't expose anything RNS-level -- it only
+        # decides which MeshCore LoRa channel this radio joins, the same way
+        # a WiFi SSID/password picks a network without implying anything
+        # about what's encrypted on top of it. Set channel_idx/channel_name/
+        # channel_secret explicitly to run your own private channel instead.
+        self.channel_idx  = int(str(cfg.get("channel_idx", 0)).strip())
+        self.channel_name = cfg.get("channel_name", "RNSTunnel")
+
+        _raw_channel_secret     = cfg.get("channel_secret")
+        self._using_default_channel_secret = _raw_channel_secret is None
+        self.channel_secret_hex = (
+            _raw_channel_secret
+            if _raw_channel_secret is not None
+            else "b99e9b45f61ab4bd4e355cf812711873"
+        )
 
         # --- Optional radio parameter overrides ----------------------------
         self.radio_freq = float(cfg.get("freq", 0))
@@ -936,6 +955,19 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Channel configured: idx={self.channel_idx} name='{self.channel_name}'.",
                 RNS.LOG_INFO
             )
+            if self._using_default_channel_secret:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"No channel_secret configured -- using the shared default "
+                    f"channel so nodes can find each other with zero setup. "
+                    f"This is fine for RNS traffic (it's already encrypted "
+                    f"end-to-end), but means this radio's MeshCore-level "
+                    f"traffic shares airtime/visibility with any other "
+                    f"default-config node in range. Set channel_idx/"
+                    f"channel_name/channel_secret explicitly for a private "
+                    f"channel.",
+                    RNS.LOG_INFO
+                )
         except Exception as exc:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "

@@ -36,15 +36,22 @@ Ideally, no config options other than mode & radio settings should be required t
 
 | Feature    | State     | Description            |
 |------------|-----------|------------------------|
-| Hybrid routing (Chanel & Direct) | Unstable | The interface caches which RNS links belong to which MeshCore contact. This allows traffic to be sent directly instead of flooding all traffic. |
+| Hybrid routing (Channel & Direct) | Working | The interface caches which RNS links belong to which MeshCore contact. This allows traffic to be sent directly instead of flooding all traffic. |
 | Automatic Peer Discovery | Battle Tested | The interface discovers any peers set to the same MeshCore channel and private key. |
 | Z85 Encode/Decode | Battle Tested | Instead of Base64, Z85 encoding is used to parse reticulum packets through MeshCore messages. Z85 theoretically expands data by 25% compared to 33% when using base64|
 | Zero static config peer discovery | Battle Tested | nodes find each other with a demand-driven `RNSBIND_REQ` / `RNSBIND` handshake instead of periodic broadcast, based on the RFC 2236 (IGMP) report-suppression pattern to avoid |
 | Capability-aware discovery | Working | peers advertise whether they can carry transit traffic (`R` router / `E` edge) at discovery time, useful for distinguishing infrastructure nodes from battery-powered edge devices.|
 | Automatic Packet Fragmentation | Basic | Fragments Reticulum packets into MeshCore sized messages. Determines the optimal size of fragments to be sent over MeshCore |
 | Multiple transports | Working | connects to the MeshCore node over serial, TCP, or BLE. |
+| Auto-reconnect | Working | automatically re-establishes the serial/BLE/TCP link if it drops, up to a configurable number of attempts, with connection-lifecycle logging. |
 | Rate limiting | Basic | independent throttles for outgoing announces, path requests, and (optionally) a hard bitrate cap, to keep the interface well-behaved on congested or bandwidth-constrained channels. - Plans to deprecate rate limiting in favor of an automatic solution |
-| Delivery aware sending | Working | waits on the MeshCore firmware's `expected_ack` / `ACK` event pair for unicast messages rather than trusting the immediate `MSG_SENT` result, with a bounded timeout so a single slow/flood-mode peer can't stall the shared outgoing queue. |
+| Delivery aware sending | Working | waits on the MeshCore firmware's `expected_ack` / `ACK` event pair for unicast messages rather than trusting the immediate `MSG_SENT` result, with a bounded timeout so a single slow/flood-mode peer can't stall the shared outgoing queue. Retries a failed direct send a couple of times before falling back to `CHANNEL`. |
+| Independent direct/channel queues | Working | direct and channel traffic are queued and processed independently, so a slow or retrying direct send can't stall channel broadcasts (or other direct sends), and vice versa. |
+| Priority queueing | Working | `LINK_REQUEST`/`PROOF` packets jump ahead of ordinary `DATA`/`ANNOUNCE` traffic already waiting in the outgoing queue, so link establishment isn't stuck behind a bulk transfer. |
+| Stale fragment dropping | Working | a fragment that's sat in the outgoing queue too long *and* has a real backlog behind it is dropped instead of sent, since the requester has very likely already given up (e.g. a NomadNet link attempt that already timed out). |
+| Adaptive path-discovery backoff & retry | Working | path-discovery requests retry a few times back-to-back before giving up (a single lost broadcast is normal on LoRa), then back off exponentially per-peer so a persistently-broken hop isn't hammered forever. |
+| Path-discovery persistence | Working | MeshCore's dedicated path-discovery command tells the requesting client a path but — by firmware design — never writes it into the device's own persistent contact table. The interface now explicitly persists a successfully-discovered path itself, so the path is also visible to the official MeshCore app on the next connection. |
+| Stale path detection & reset | Working | a cached path can go stale (a repeater moves, a shorter route opens up) while remaining stuck in the contact table; repeated direct-send failures against a peer's cached path now trigger a reset to flood mode rather than continuing to retry a route that's proven itself dead. |
 | Raw Binary Send | Planned | Right now this project uses Z85 encoding as a more size efficient alternative to Base64 encoding. I've made the decision to wait for SEND_RAW_DATA to be fully implemented in meshcore_py before implementing this feature |
 | Compatibility other RNS over MeshCore interfaces | Planned | Support discovery & compatibility with other MeshCore interfaces where possible |
 | Announce Priority By RNS Hop Count | Planned | On Transfer Nodes; cache and queue announces for Reticulum nodes and prioritise based on hop count. |
@@ -67,11 +74,11 @@ pip install rns meshcore
 1. Copy `MeshCore_Dynamic_Interface.py` into your Reticulum config's `interfaces` directory (typically `~/.reticulum/interfaces/`).
 2. Add an interface block to `~/.reticulum/config` (see [Configuration](#configuration) below).
 3. Restart `rnsd`, or reload interfaces if your setup supports it.
-4. Every node participating in the same tunnel must use the same `channel_idx`, `channel_name`, and `channel_secret`.
+4. If you leave `channel_idx`/`channel_name`/`channel_secret` unset, every node defaults to the same shared "RNSTunnel" channel, so nodes can find each other with zero coordination. Set all three explicitly (and match them across your own nodes) if you want a private channel instead.
 
 ### Configuration
 
-Every node needs at minimum a transport block and matching channel identity. A full infrastructure/transport-node example:
+Every node needs at minimum a transport block. Channel identity is optional — the defaults below already match across all nodes running this interface unmodified. A full infrastructure/transport-node example:
 
 ```ini
 [reticulum]
@@ -106,9 +113,16 @@ Every node needs at minimum a transport block and matching channel identity. A f
     # transport = ble
     # ble_name =            # blank = connect to first found device
 
-    # Channel — all nodes on the same tunnel must share these values
-    channel_idx = 0
-    channel_name = RNSTunnel
+    # Channel — defaults join a shared public channel with zero coordination
+    # needed. RNS already encrypts and authenticates your actual traffic
+    # end-to-end, so a publicly-known default channel secret isn't a
+    # security concern here — it only selects which MeshCore LoRa channel
+    # this radio joins, like a WiFi SSID, not what's encrypted on top of it.
+    # Uncomment and set your own values for a private channel instead (all
+    # nodes on it must then match these three settings).
+    # channel_idx = 0
+    # channel_name = RNSTunnel
+    # channel_secret = <32 hex chars>   # openssl rand -hex 16
 
     # Radio overrides — all four must be non-zero to take effect.
     # Leave commented to use the values already stored on the MeshCore node.
@@ -204,7 +218,7 @@ max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
 Each RNS binary packet is split into `payload_size`-byte chunks. Each chunk is encoded as a MeshCore channel (or direct) message:
 
 ```
-"RNS:" + Z48 Encode( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
+"RNS:" + Z85 Encode( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
 ```
 
 ### Peer discovery
@@ -224,7 +238,17 @@ The interface inspects the RNS header byte to distinguish packet types (`DATA`, 
 
 ### Delivery confirmation
 
-A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — it isn't end-to-end delivery confirmation. For direct sends, the interface waits on the firmware's follow-up `ACK` event (matched via the `expected_ack` tag from `MSG_SENT`), bounded by `direct_ack_timeout` and a hard ceiling `direct_ack_timeout_max` so that a flood-mode peer with a long firmware-suggested timeout can't stall every other fragment behind it in the shared outgoing queue. A failed or unacknowledged direct send falls back to a channel broadcast.
+A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — it isn't end-to-end delivery confirmation. For direct sends, the interface waits on the firmware's follow-up `ACK` event (matched via the `expected_ack` tag from `MSG_SENT`), bounded by `direct_ack_timeout` and a hard ceiling `direct_ack_timeout_max` so that a flood-mode peer with a long firmware-suggested timeout can't stall every other fragment behind it in the shared outgoing queue. A failed direct send is retried (`direct_send_attempts`) before falling back to a channel broadcast.
+
+### Path staleness, discovery, and persistence
+
+MeshCore's dedicated path-discovery command tells *the requesting client* a discovered path, but — by firmware design — it does not write that path into the device's own persistent contact table the way an ordinary message exchange does. Left alone, this means a path the interface believes it "discovered" can still show as unresolved to the official MeshCore app on its next connection. The interface now explicitly persists a successfully-discovered path back to the device itself, closing that gap.
+
+Separately, a path that *is* persisted can still go stale over time — a repeater repositions, or a shorter route opens up — while remaining stuck in the contact table. Continuing to retry a stale path measured far worse in testing than simply resetting it: the interface tracks consecutive direct-send failures against a peer's cached path, and once `direct_path_reset_threshold` is reached, resets that peer to flood mode so the next attempt can find whatever route currently works instead of retrying a route that's already proven dead.
+
+### Outgoing queue behavior
+
+Direct and channel traffic are queued and processed independently (`_direct_outqueue` / `_channel_outqueue`), so a direct send that's slow or retrying can't stall channel broadcasts, and vice versa. Within each queue, `LINK_REQUEST`/`PROOF` packets are prioritized ahead of ordinary `DATA`/`ANNOUNCE` traffic, so a link-establishment attempt isn't stuck behind a bulk transfer. A fragment that's been queued longer than `stale_fragment_max_age` *and* still has a real backlog behind it (`stale_fragment_min_queue_depth`) is dropped rather than sent — age alone is never enough, since a fragment that simply had bad luck on an otherwise quiet queue will get sent momentarily regardless.
 
 ## Transports
 
@@ -238,19 +262,33 @@ A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — 
 
 | Key | Default | Purpose |
 |---|---|---|
+| `channel_idx` | `0` | MeshCore channel index. Leave unset to use the shared default channel. |
+| `channel_name` | `RNSTunnel` | MeshCore channel name. Leave unset to use the shared default channel. |
+| `channel_secret` | *(shared default)* | MeshCore channel encryption key (32 hex chars). Sharing the default isn't an RNS security concern — see [Configuration](#configuration) — but set your own for a private channel. |
 | `payload_size` | `64` | Fragment payload size in bytes; see [Payload size](#payload-size) |
 | `fragment_delay` | `2.5` | Seconds between channel-mode fragments |
 | `direct_frag_delay` | `0.5` | Seconds between direct-message fragments |
 | `fragment_timeout` | `300` | Reassembly window for incomplete multi-fragment packets |
 | `direct_ack_timeout` | `4.0` | Minimum wait for a direct-send delivery ACK |
 | `direct_ack_timeout_max` | `8.0` | Hard ceiling on the ACK wait regardless of firmware suggestion |
+| `direct_send_attempts` | `3` | Retries for a direct send (fresh ACK wait each time) before falling back to `CHANNEL` |
+| `path_discovery_quick_attempts` | `3` | Back-to-back path-discovery retries before handing off to the exponential backoff below |
+| `path_discovery_base_cooldown` | `15.0` | Cooldown after the first path-discovery failure round for a peer |
+| `path_discovery_max_cooldown` | `900.0` | Ceiling on the path-discovery backoff, regardless of consecutive failures |
+| `path_discovery_backoff_factor` | `2.0` | Multiplier applied to the cooldown per additional failure round |
+| `direct_path_reset_threshold` | `2` | Consecutive fully-exhausted direct-send failures against a peer's *cached* path before resetting it to flood mode (`0` disables) |
+| `stale_fragment_max_age` | `30.0` | Seconds a fragment may sit in the outgoing queue before it's eligible to be dropped (`0` disables) |
+| `stale_fragment_min_queue_depth` | `10` | Fragments must also be backed up at least this many deep before dropping kicks in — age alone is never enough |
+| `contact_refresh_interval` | `120.0` | Seconds between periodic re-fetches of MeshCore's contact list, so cached path info doesn't go stale between events |
 | `outgoing_announce_rate` | `600` | Minimum seconds between announces per destination (`0` disables) |
 | `outgoing_path_req_rate` | `1800` | Minimum seconds between path requests per destination (`0` disables) |
 | `rate_limit` | `0` | Optional hard bandwidth cap in bits/second (`0` disables) |
 | `allow_direct` | `yes` | Use unicast direct messages when a route to the peer is known |
 | `peer_ttl` | `86400` | Seconds before a silent peer is dropped from the peer table |
 | `can_route` | `yes` | Whether this node can carry transit traffic |
-| `debug_level` | `info` | `info` or `debug` |
+| `auto_reconnect` | `yes` | Automatically try to re-establish the link if it drops |
+| `max_reconnect_attempts` | `3` | Reconnect attempts before giving up (only relevant if `auto_reconnect` is enabled) |
+| `debug_level` | `info` | `info` or `debug` — `debug` enables this interface's own verbose diagnostic logs independently of RNS core's global `loglevel`, so you get interface-level detail without RNS core's own debug firehose |
 
 ## Limitations
 
@@ -266,10 +304,12 @@ Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better 
 
 |     | Direct     | 1x Repeater | 2x Repeater |
 |-----|-----------|-----------------|------|
-| MeshChat DM (3 Total RNS Hops) | Working | slow | Unreliable |
-| MeshChat DM (6 Total RNS Hops) | Working | slow | Unreliable |
-| NomadNet (3 Total RNS Hops)| Working | Not working | Not working |
-| NomadNet (5 Total RNS Hops)| Working | Not working | Not working |
+| MeshChat DM (3 Total RNS Hops) | Working | Working | Unreliable |
+| MeshChat DM (6 Total RNS Hops) | Working | Working | Unreliable |
+| NomadNet (3 Total RNS Hops)| Working | Working | Not working |
+| NomadNet (5 Total RNS Hops)| Working | Working | Not working |
+
+- The `1x Repeater` column was retested after adding independent direct/channel queues, priority queueing, stale-fragment dropping, path-discovery persistence, and stale-path reset-to-flood — all previously "slow"/"not working" cases over a single repeater are now working reliably. `2x Repeater` hasn't been retested against these fixes yet.
 - This interface is built and tested against a specific `meshcore` library API surface; firmware/library version drift may require updates to event/attribute names.
 
 Yes, I absolutely had help from Claude on this. I'm not a software person, I'm just stubborn enough to think I can beat my head against something until it works. PLEASE feel free to offer improvements and corrections.
