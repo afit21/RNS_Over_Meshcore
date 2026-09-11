@@ -37,15 +37,22 @@ Ideally, no config options other than mode & radio settings should be required t
 | Multiple transports | Working | connects to the MeshCore node over serial, TCP, or BLE. |
 | Rate limiting | Basic | independent throttles for outgoing announces, path requests, and (optionally) a hard bitrate cap, to keep the interface well-behaved on congested or bandwidth-constrained channels. - Plans to deprecate rate limiting in favor of an automatic solution |
 | Delivery aware sending | Working | waits on the MeshCore firmware's `expected_ack` / `ACK` event pair for unicast messages rather than trusting the immediate `MSG_SENT` result, with a bounded timeout so a single slow/flood-mode peer can't stall the shared outgoing queue. |
+| Raw Binary Send | Planned | Right now this project uses Z85 encoding as a more size efficient alternative to Base64 encoding. I've made the decision to wait for SEND_RAW_DATA to be fully implemented in meshcore_py before implementing this feature |
+| Compatibility other RNS over MeshCore interfaces | Planned | Support discovery & compatibility with other MeshCore interfaces where possible |
+| Announce Priority By RNS Hop Count | Planned | On Transfer Nodes; cache and queue announces for Reticulum nodes and prioritise based on hop count. |
 
 ## Field Tests
 
 Just so you have realistic expectations :)
 
+Using 'RNS Hops' and 'slow' is a bit ambiguous, but until I come up with better testing methodology, this is what you get. Keep in mind, a connection over Meshcore only counts as one hop, regardless of the amount of repeaters.
+
 |     | Direct     | 1x Repeater | 2x Repeater |
 |-----|-----------|-----------------|------|
-| MeshChat DM | Working | Working (slow) | Working (slow) |
-| NomadNet | Working (slow) | Not working | Not working |
+| MeshChat DM (3 Total RNS Hops) | Working | slow | Unreliable |
+| MeshChat DM (6 Total RNS Hops) | Working | slow | Unreliable |
+| NomadNet (3 Total RNS Hops)| Working | Not working | Not working |
+| NomadNet (5 Total RNS Hops)| Working | Not working | Not working |
 
 ## Requirements
 
