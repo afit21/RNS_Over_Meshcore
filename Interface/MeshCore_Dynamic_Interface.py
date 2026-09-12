@@ -692,6 +692,18 @@ class MeshCore_Dynamic_Interface(Interface):
     BIND_RESP_WINDOW_S = 60.0
     BIND_MAX_RETRIES   = 3
 
+    # MeshCore companion-firmware constants for the telemetry-permission
+    # grant (see _grant_telemetry_permission / auto_grant_telemetry_permission).
+    # TELEM_MODE_ALLOW_FLAGS: answer a base-telemetry (and so path-discovery)
+    # request only from contacts with the permission bit below set, rather
+    # than TELEM_MODE_ALLOW_ALL (answer everyone) or the firmware default
+    # TELEM_MODE_DENY (answer no one). The bit itself: firmware computes
+    # `cp = contact.flags >> 1` then gates on `cp & TELEM_PERM_BASE` (0x01)
+    # -- i.e. bit 1 (0x02) of the raw contact.flags byte (bit 0 is the
+    # unrelated "favourite" flag) -- see MyMesh.cpp's onContactRequest.
+    _TELEM_MODE_ALLOW_FLAGS     = 1
+    _TELEM_FLAG_BASE_PERMISSION = 0x02
+
     _RNS_DST_LEN = 16
     _RNS_PTYPE_DATA     = 0x00
     _RNS_PTYPE_ANNOUNCE = 0x01
@@ -1109,6 +1121,27 @@ class MeshCore_Dynamic_Interface(Interface):
         # no part in any routing/retry/timeout decision) when this is True.
         self.reports_phy_stats = True
 
+        # MeshCore's path-discovery command is, per the firmware source
+        # itself ("'Path Discovery' is just a special case of flood +
+        # Telemetry req"), secretly a base-telemetry request -- and the
+        # firmware silently declines to answer ANY such request at all
+        # unless the responding node's telemetry_mode_base preference
+        # allows it, which defaults to DENY. Rather than opening that to
+        # every MeshCore user in radio range (TELEM_MODE_ALLOW_ALL), this
+        # uses MeshCore's per-contact ALLOW_FLAGS mode and grants the
+        # permission bit only to peers who've proven they know this
+        # channel's secret via a real RNSBIND/RNSBIND_REQ (see
+        # _grant_telemetry_permission, called from _handle_bind) --
+        # confirmed RNS-tunnel peers, not every device on the shared
+        # channel. Set to no if you don't want this node answering base
+        # telemetry (battery voltage, MCU temperature) requests from
+        # anyone, accepting that path discovery to/from it will then never
+        # succeed via that mechanism.
+        self.auto_grant_telemetry_permission = (
+            cfg.get("auto_grant_telemetry_permission", "yes").lower()
+            not in ("no", "false", "0")
+        )
+
     def _init_runtime_state(self) -> None:
         """Initialize all internal mutable state (queues, locks, caches,
         rate-limiter/peer bookkeeping) ahead of async setup. Pure
@@ -1452,6 +1485,7 @@ class MeshCore_Dynamic_Interface(Interface):
         await self._setup_configure_channel()
         await self._setup_detect_direct_api()
         await self._load_peer_cache()
+        await self._setup_configure_telemetry_permissions()
         self._setup_subscribe_contact_and_message_events(ET)
         self._setup_subscribe_lifecycle_events(ET)
         await self._setup_start_background_tasks()
@@ -1674,6 +1708,72 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"allow_direct=no -- DIRECT sends disabled by config, all "
                 f"outgoing traffic will use CHANNEL.",
                 RNS.LOG_INFO
+            )
+
+    async def _setup_configure_telemetry_permissions(self) -> None:
+        """Switch this node's own telemetry_mode_base preference to
+        TELEM_MODE_ALLOW_FLAGS (per-contact, via _grant_telemetry_permission)
+        instead of the firmware default TELEM_MODE_DENY. See
+        auto_grant_telemetry_permission's config docstring for why this
+        matters: without it, this node's firmware silently refuses to
+        answer ANY path-discovery request (which is secretly a base-
+        telemetry request), regardless of RF conditions -- confirmed
+        directly against real hardware in the field. A local, no-mesh-
+        airtime command; best-effort since it's a one-time nicety, not a
+        setup precondition."""
+        if not self.auto_grant_telemetry_permission or self._mc is None:
+            return
+        try:
+            res = await self._mc.commands.set_telemetry_mode_base(
+                self._TELEM_MODE_ALLOW_FLAGS
+            )
+            if res is not None and self._EventType is not None and res.type == self._EventType.ERROR:
+                self._debug(f"Failed to set telemetry_mode_base: {res.payload}")
+            else:
+                self._debug(
+                    "telemetry_mode_base set to ALLOW_FLAGS -- base telemetry "
+                    "(and so path discovery) will be answered only for peers "
+                    "granted the permission bit via a confirmed RNSBIND "
+                    "(see _grant_telemetry_permission)."
+                )
+        except Exception as exc:
+            self._debug(f"Failed to set telemetry_mode_base: {exc}")
+
+    async def _grant_telemetry_permission(self, mc_pubkey: str) -> None:
+        """Grant this confirmed RNS-tunnel peer permission to receive our
+        base telemetry (battery voltage, MCU temperature) -- MeshCore's
+        path-discovery command is, per the firmware source itself, secretly
+        a base-telemetry request, and the firmware silently declines to
+        answer it at all unless the responding node's telemetry_mode_base
+        preference allows it (see _setup_configure_telemetry_permissions).
+        Rather than opening that to every contact (TELEM_MODE_ALLOW_ALL),
+        this uses MeshCore's per-contact ALLOW_FLAGS mode and only grants
+        the permission bit to peers who've proven they know this channel's
+        secret via a real RNSBIND/RNSBIND_REQ -- i.e. confirmed RNS-tunnel
+        peers, not every MeshCore user in radio range. Idempotent: only
+        issues the (local, no-mesh-airtime) update command if the bit
+        isn't already set, and only ever called from _handle_bind, never
+        from a bare contact-table event (which has no comparable proof of
+        channel-secret knowledge)."""
+        if not self.auto_grant_telemetry_permission or self._mc is None:
+            return
+        try:
+            contact = self._mc.get_contact_by_key_prefix(mc_pubkey)
+            if contact is None:
+                return
+            current_flags = contact.get("flags", 0) or 0
+            if current_flags & self._TELEM_FLAG_BASE_PERMISSION:
+                return
+            await self._mc.commands.change_contact_flags(
+                contact, current_flags | self._TELEM_FLAG_BASE_PERMISSION
+            )
+            self._debug(
+                f"Granted base-telemetry permission to {mc_pubkey[:16]}... "
+                f"(needed for MeshCore path discovery to work with this peer)."
+            )
+        except Exception as exc:
+            self._debug(
+                f"Failed to grant telemetry permission to {mc_pubkey[:16]}...: {exc}"
             )
 
     async def _load_peer_cache(self) -> None:
@@ -2187,16 +2287,38 @@ class MeshCore_Dynamic_Interface(Interface):
         if self._mc is None:
             return
         retries = 0
+        # _load_peer_cache() (see _async_setup) can populate _peer_table
+        # with restored bindings before this loop's very first check below
+        # -- which would otherwise make have_peers true immediately and
+        # skip the active RNSBIND_REQ phase entirely on every startup that
+        # has a valid cache, forced instead straight into the quiet,
+        # unsolicited RNSBIND heartbeat branch and its BIND_HEARTBEAT_S
+        # (1 hour) sleep. That silences this node's own startup
+        # advertisement, AND denies any node that doesn't already have
+        # this one cached (or whose cache expired) the chance to learn
+        # about it -- a real regression from the fast-restart benefit the
+        # cache is supposed to provide, confirmed against a pre-cache
+        # build in the field. So the REQ phase still always runs at least
+        # once on a fresh start regardless of what the cache restored;
+        # only after it completes does have_peers (now reflecting
+        # whatever was restored, live-bound, or learned during that REQ
+        # round) start gating things the original way.
+        startup_req_done = False
 
         while True:
             with self._peer_lock:
                 have_peers = bool(self._peer_table)
+            if not startup_req_done:
+                have_peers = False
 
             if not have_peers and retries < self.BIND_MAX_RETRIES:
                 if self.online and self._own_mc_key:
+                    with self._peer_lock:
+                        really_has_peers = bool(self._peer_table)
                     RNS.log(
                         f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"No peers — sending RNSBIND_REQ "
+                        f"{'Startup announcement' if really_has_peers else 'No peers'} "
+                        f"— sending RNSBIND_REQ "
                         f"(attempt {retries + 1}/{self.BIND_MAX_RETRIES}, "
                         f"cap={self._own_capability()})",
                         RNS.LOG_INFO
@@ -2210,10 +2332,13 @@ class MeshCore_Dynamic_Interface(Interface):
                     except Exception:
                         pass
                 retries += 1
+                if retries >= self.BIND_MAX_RETRIES:
+                    startup_req_done = True
                 await asyncio.sleep(self.BIND_RESP_WINDOW_S)
 
             else:
                 retries = 0
+                startup_req_done = True
                 if self.online and self._own_mc_key:
                     try:
                         await self._mc.commands.send_chan_msg(
@@ -2221,8 +2346,18 @@ class MeshCore_Dynamic_Interface(Interface):
                             f"{self.BIND_PREFIX}"
                             f"{self._own_mc_key}:{self._own_capability()}"
                         )
-                    except Exception:
-                        pass
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"Sent RNSBIND heartbeat [cap={self._own_capability()}] "
+                            f"(next in {self.BIND_HEARTBEAT_S:.0f}s).",
+                            RNS.LOG_INFO
+                        )
+                    except Exception as exc:
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"RNSBIND heartbeat send failed: {exc}",
+                            RNS.LOG_WARNING
+                        )
                 await asyncio.sleep(self.BIND_HEARTBEAT_S)
 
     async def _delayed_bind_response(self):
@@ -2823,6 +2958,15 @@ class MeshCore_Dynamic_Interface(Interface):
         mc_pubkey = mc_pubkey.strip()
         if not mc_pubkey:
             return
+
+        # A real RNSBIND/RNSBIND_REQ is proof this sender knows our channel
+        # secret -- exactly the "posts in the encrypted channel" signal
+        # _grant_telemetry_permission needs before sharing base telemetry
+        # (and so answering path discovery) with them. Never granted from
+        # a bare MeshCore contact-table event, which has no equivalent
+        # proof. Idempotent (no-ops once already granted), so safe to call
+        # on every bind including repeat heartbeats.
+        await self._grant_telemetry_permission(mc_pubkey)
 
         peer_changed = self._register_peer_binding(sender_name, mc_pubkey, peer_can_route)
 

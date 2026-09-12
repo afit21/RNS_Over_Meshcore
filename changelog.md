@@ -63,6 +63,40 @@ this is the build intended for the next round of field testing
   flow again, even when the MeshCore device already had a working cached
   path -- directly observed in the field test's 9 `rnsd` restarts inside one
   49-minute window, each re-flooding the shared channel for no benefit.
+  **Caught during this same round of testing**: the first implementation of
+  this feature had a real regression -- a restored peer made
+  `_bind_discovery_loop`'s `have_peers` check true immediately, which
+  skipped the active `RNSBIND_REQ` phase entirely and went straight to a
+  silent, unsolicited heartbeat with nothing sent again for
+  `BIND_HEARTBEAT_S` (1 hour). Every prior restart (with no cache) always
+  ran that active REQ phase, so this silenced the node's own startup
+  advertisement and denied any node that didn't already have it cached the
+  chance to learn about it. Fixed: the REQ phase now always runs at least
+  once on a fresh start regardless of what the cache restored; only after
+  it completes does cached/live peer state resume gating the steady-state
+  heartbeat-vs-retry behavior as before. The RNSBIND heartbeat send (the
+  quiet, no-response-expected branch) also previously had no logging at
+  all on success or failure -- added, so a session that never sends an
+  active REQ (because peers were already known) still leaves a visible
+  trace that the heartbeat went out.
+- Telemetry-permission auto-grant (`auto_grant_telemetry_permission`,
+  default on): field-testing against real hardware found that MeshCore's
+  path-discovery command is, per the firmware source itself ("'Path
+  Discovery' is just a special case of flood + Telemetry req"), secretly a
+  base-telemetry request -- and the firmware silently declines to answer
+  it AT ALL unless the responding node's `telemetry_mode_base` preference
+  allows it, which defaults to `TELEM_MODE_DENY`. This explained a
+  100%-reproducible path-discovery failure under otherwise-ideal RF
+  conditions (confirmed via live diagnostics against real hardware: the
+  raw request always sent successfully and was confirmed physically
+  received by the peer via the official MeshCore app, but no response was
+  ever generated). Rather than opening telemetry to every MeshCore user in
+  range (`TELEM_MODE_ALLOW_ALL`), this switches the node to
+  `TELEM_MODE_ALLOW_FLAGS` and grants the per-contact permission bit only
+  to peers who've proven they know this channel's secret via a real
+  RNSBIND/RNSBIND_REQ (`_grant_telemetry_permission`, called from
+  `_handle_bind`) -- confirmed RNS-tunnel peers, not every device sharing
+  the LoRa channel.
 - `direct_path_reset_rssi_floor` / `direct_path_reset_patience_multiplier`:
   before resetting a DIRECT peer's cached path to flood mode,
   `_handle_send_failure` now checks the last-polled RSSI. Resetting is
