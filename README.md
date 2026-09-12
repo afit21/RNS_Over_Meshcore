@@ -240,7 +240,9 @@ The interface inspects the RNS header byte to distinguish packet types (`DATA`, 
 
 ### Delivery confirmation
 
-A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — it isn't end-to-end delivery confirmation. For direct sends, the interface waits on the firmware's follow-up `ACK` event (matched via the `expected_ack` tag from `MSG_SENT`), bounded by `direct_ack_timeout` and a hard ceiling `direct_ack_timeout_max` so that a flood-mode peer with a long firmware-suggested timeout can't stall every other fragment behind it in the shared outgoing queue. A failed direct send is retried (`direct_send_attempts`) before falling back to a channel broadcast.
+A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — it isn't end-to-end delivery confirmation. For direct sends, the interface waits on the firmware's follow-up `ACK` event (matched via the `expected_ack` tag from `MSG_SENT`), for at least `direct_ack_timeout` and otherwise 1.2× the firmware's own per-send `suggested_timeout`, which grows with hop count (field logs: ~11 s at 1 hop, 14–21 s at 3 hops). `MSG_SENT` also reports whether the radio sent along a cached route or had to flood; routed sends are bounded by `direct_ack_timeout_routed_max`, flood-mode sends (where the firmware can suggest minutes) by the much shorter `direct_ack_timeout_max`. A failed direct send is retried (`direct_send_attempts`) before falling back to a channel broadcast. Every attempt of a fragment shares one delivery record, so an ACK that arrives after its own attempt's wait expired — during a retry — still counts as delivery instead of being discarded.
+
+All commands to the radio are serialized through a single lock. The `meshcore` library matches a command's reply by event *type* only, with no locking, so two commands in flight at once (a `send_msg` and a path-discovery request both wait on `MSG_SENT`; nearly everything accepts `ERROR`) would each be handed whichever reply the radio emits first — field logs showed direct sends adopting a discovery request's tag as their `expected_ack`. Only the command round trip is held; ACK waits happen outside the lock, so channel sends and polling continue while a direct send awaits delivery.
 
 ### Path staleness, discovery, and persistence
 
@@ -275,13 +277,14 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `direct_frag_delay` | `0.5` | Seconds between direct-message fragments |
 | `fragment_timeout` | `300` | Reassembly window for incomplete multi-fragment packets |
 | `direct_ack_timeout` | `4.0` | Minimum wait for a direct-send delivery ACK |
-| `direct_ack_timeout_max` | `20.0` | Hard ceiling on the ACK wait regardless of firmware suggestion — the official client applies no ceiling at all; this one exists purely to stop a genuinely flood-mode/no-path peer (which can suggest minutes) from blocking the DIRECT queue, and is sized to comfortably clear realistic multi-hop cached-path estimates (observed 10-15s) rather than cut them off |
+| `direct_ack_timeout_routed_max` | `45.0` | Ceiling on the ACK wait for a send the firmware routed along a cached path — sized to clear any realistic multi-hop estimate (the official client applies no ceiling at all) |
+| `direct_ack_timeout_max` | `10.0` | Ceiling on the ACK wait for a send the firmware had to flood (no known path, where it can suggest minutes) — our own `CHANNEL` fallback is the cheaper way to reach such a peer. Attempts cut short by either ceiling never count toward a path reset |
 | `direct_send_attempts` | `3` | Retries for a direct send (fresh ACK wait each time) before falling back to `CHANNEL` |
 | `path_discovery_quick_attempts` | `3` | Back-to-back path-discovery retries before handing off to the exponential backoff below |
 | `path_discovery_base_cooldown` | `15.0` | Cooldown after the first path-discovery failure round for a peer |
 | `path_discovery_max_cooldown` | `900.0` | Ceiling on the path-discovery backoff, regardless of consecutive failures |
 | `path_discovery_backoff_factor` | `2.0` | Multiplier applied to the cooldown per additional failure round |
-| `direct_path_reset_threshold` | `2` | Consecutive fully-exhausted direct-send failures against a peer's *cached* path before resetting it to flood mode (`0` disables) |
+| `direct_path_reset_threshold` | `2` | Consecutive direct-send attempts that waited the firmware's full suggested ACK time and still failed, against a peer's *cached* path, before resetting it to flood mode (`0` disables) |
 | `direct_path_reset_rssi_floor` | `-105.0` | If the last-polled RSSI is at/below this, reset at `direct_path_reset_threshold` unchanged (conditions look genuinely poor); above it, be more patient — see next row |
 | `direct_path_reset_patience_multiplier` | `3.0` | When RSSI looks reasonable, wait this many times `direct_path_reset_threshold` before resetting a cached path — resetting is irreversible and forces recovery through flood-mode discovery, so it's worth one more retry first when conditions don't look dead |
 | `stale_fragment_max_age` | `30.0` | Seconds a fragment may sit in the outgoing queue before it's eligible to be dropped (`0` disables) |

@@ -913,27 +913,20 @@ class MeshCore_Dynamic_Interface(Interface):
         # length/airtime); we wait whichever of the two is longer.
         self.direct_ack_timeout_s = float(cfg.get("direct_ack_timeout", 4.0))
 
-        # Hard ceiling on that wait, regardless of what the firmware suggests.
-        # A contact with no known path (flood mode) can report a suggested
-        # timeout of many seconds to minutes; the DIRECT queue has its own
-        # worker task (separate from CHANNEL, see _async_outgoing_worker), so
-        # an uncapped wait here can't stall channel broadcasts, but it would
-        # still stall every other queued DIRECT fragment behind it. Our own
-        # CHANNEL fallback is cheap, so we cap the wait and let the fallback
-        # handle it instead.
-        #
-        # The official meshcore client's own send_msg_with_retry applies NO
-        # cap at all -- it always waits the full suggested_timeout*1.2.
-        # This was previously 8.0s, which field-testing against real
-        # hardware showed cutting off entirely ordinary multi-hop cached-path
-        # estimates (observed 9.9-12.4s suggested for a single-repeater
-        # out_path_len=1 route, not even flood mode) -- guaranteed to declare
-        # failure before a legitimately-in-flight ACK could ever arrive.
-        # Raised to comfortably cover realistic multi-hop estimates while
-        # still guarding against the genuinely-pathological flood/no-path
-        # case (which can run into minutes) blocking the DIRECT queue
-        # indefinitely.
+        # Ceilings on that wait. The firmware reports in MSG_SENT whether it
+        # sent the fragment along a cached route or flooded it (no known
+        # path), and its suggested_timeout scales with hop count: field logs
+        # showed 10.9s for a 1-hop route and 13.7-21.3s for 3 hops, so a
+        # single low ceiling declared delivered fragments failed on every
+        # multi-hop route while the official client (which never caps) saw
+        # them succeed. Routed sends therefore get a ceiling generous enough
+        # to clear any realistic multi-hop estimate; only flood-mode sends,
+        # where the firmware can suggest minutes, keep the short one -- our
+        # CHANNEL fallback is a cheaper way to reach a peer with no path.
         self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 10.0))
+        self.direct_ack_timeout_routed_max_s = float(
+            cfg.get("direct_ack_timeout_routed_max", 45.0)
+        )
 
     def _configure_path_discovery_and_retry(self, cfg) -> None:
         """Adaptive path-discovery backoff, and retry counts for both path
@@ -1182,8 +1175,10 @@ class MeshCore_Dynamic_Interface(Interface):
         # Thread-safe queues used to decouple synchronous execution from the
         # worker loops. DIRECT and CHANNEL traffic get independent queues (and
         # independent worker tasks, see _async_outgoing_worker) so a DIRECT
-        # send blocked waiting on a delivery ACK (up to direct_ack_timeout_max_s)
-        # can never stall CHANNEL broadcasts queued behind it, and vice versa.
+        # send blocked waiting on a delivery ACK (up to
+        # direct_ack_timeout_routed_max_s) can never stall CHANNEL broadcasts
+        # queued behind it, and vice versa. Only the command round trip
+        # itself is serialized across both (see _install_command_serializer).
         #
         # Both are PriorityQueues rather than plain FIFOs: LINK_REQUEST and
         # PROOF packets (see _PRIORITY_HANDSHAKE below) jump ahead of ordinary
@@ -1329,6 +1324,18 @@ class MeshCore_Dynamic_Interface(Interface):
         # works. Reset to 0 the moment a DIRECT send succeeds. See
         # direct_path_reset_threshold (_configure_path_discovery_and_retry).
         self._direct_path_failures = {}   # target_key -> consecutive DIRECT failure count
+
+        # Delivery-ACK matching for DIRECT sends. Both dicts are only ever
+        # touched from this interface's own event loop, so no lock.
+        #   _pending_acks: expected_ack code -> (future, attempt_start) for
+        #     every attempt of every fragment currently awaiting delivery;
+        #     all attempts of one fragment share one future, so an ACK for
+        #     an EARLIER attempt (arriving after that attempt's wait expired)
+        #     still resolves the fragment as delivered.
+        #   _recent_acks: code -> monotonic time of every ACK heard lately,
+        #     so an ACK that beats the registration of its code is not lost.
+        self._pending_acks = {}
+        self._recent_acks  = {}
 
     def _start_event_loop_and_wait(self) -> None:
         """Start this interface's own asyncio event loop on a dedicated
@@ -1518,6 +1525,7 @@ class MeshCore_Dynamic_Interface(Interface):
         if not await self._setup_connect_transport(MeshCore, ET):
             return
 
+        self._install_command_serializer()
         await self._setup_fetch_identity()
         await self._setup_apply_radio_overrides()
         await self._setup_configure_channel()
@@ -1607,6 +1615,36 @@ class MeshCore_Dynamic_Interface(Interface):
             return False
 
         return True
+
+    def _install_command_serializer(self) -> None:
+        """Serialize every command sent to the radio through one lock.
+
+        The meshcore library's CommandHandler.send() has no locking and
+        matches a command's reply by event TYPE alone: it subscribes to the
+        expected types, writes the frame, and returns the first such event
+        the dispatcher fans out -- to every subscriber. Two in-flight
+        commands expecting the same type (send_msg and send_path_discovery
+        both wait on MSG_SENT; nearly everything accepts ERROR) are both
+        handed whichever reply the radio emits first. Field logs showed a
+        DIRECT send adopting a path-discovery request tag as its
+        expected_ack (and the discovery adopting the message's reply), so
+        neither could ever complete. Wrapping send() itself, rather than each
+        call site, also covers the library's own internal commands (auto
+        message fetching, ensure_contacts). Only the command round trip is
+        held; delivery-ACK waits happen outside the lock."""
+        assert self._mc is not None
+        commands = self._mc.commands
+        original_send = commands.send
+        if getattr(original_send, "_rns_serialized", False):
+            return
+        lock = asyncio.Lock()
+
+        async def serialized_send(*args, **kwargs):
+            async with lock:
+                return await original_send(*args, **kwargs)
+
+        setattr(serialized_send, "_rns_serialized", True)
+        commands.send = serialized_send
 
     async def _setup_fetch_identity(self) -> None:
         """Fetch this node's own name/pubkey via send_appstart() -- needed
@@ -1973,6 +2011,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
+        _ack_et = None
         for _name in ("ACK", "MSG_ACKED", "MESSAGE_ACKED", "CHAN_ACK"):
             _ack_et = getattr(ET, _name, None)
             if _ack_et is not None:
@@ -1989,21 +2028,16 @@ class MeshCore_Dynamic_Interface(Interface):
                 )
                 break
 
-        # The DIRECT delivery-confirmation wait in _async_outgoing_worker
-        # references self._EventType.ACK directly (not whichever alias was
-        # matched above), so that's the one that actually has to exist for
-        # ACK-gated direct sends to work at all. If it's missing, every
-        # direct send with an expected_ack will raise AttributeError inside
-        # the worker's try block and get silently treated as a normal send
-        # failure (falling back to CHANNEL) -- which looks like a flaky link
-        # rather than a library incompatibility, so flag it clearly here.
-        if self.allow_direct and self._has_direct_api and getattr(ET, "ACK", None) is None:
+        # DIRECT delivery confirmation relies entirely on that subscription
+        # (_on_msg_ack resolves the waiting fragment). Without it every
+        # DIRECT send would time out and fall back to CHANNEL, which looks
+        # like a flaky link rather than a library incompatibility.
+        if self.allow_direct and self._has_direct_api and _ack_et is None:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"This meshcore library has no EventType.ACK -- every DIRECT "
-                f"send that expects a delivery ACK will error out and fall "
-                f"back to CHANNEL. If you see repeated 'DIRECT send ... "
-                f"failed' log lines mentioning AttributeError, this is why.",
+                f"This meshcore library exposes no delivery-ACK event type -- "
+                f"every DIRECT send that expects a delivery ACK will time out "
+                f"and fall back to CHANNEL.",
                 RNS.LOG_WARNING
             )
 
@@ -2852,12 +2886,29 @@ class MeshCore_Dynamic_Interface(Interface):
             snr=payload.get("SNR"), rssi=payload.get("RSSI"),
         )
 
+    _RECENT_ACKS_MAX = 64
+
     async def _on_msg_ack(self, event):
-        """No-op subscriber. ACKs are actually consumed via a targeted
-        mc.dispatcher.wait_for_event(EventType.ACK, ...) in
-        _send_direct_with_retry; this subscription only exists so the
-        library doesn't warn about an unhandled ACK event type."""
-        pass
+        """Resolve the DIRECT fragment (if any) awaiting this delivery ACK
+        -- see _pending_acks in _init_runtime_state -- and remember the
+        code briefly so an ACK arriving before its code is registered
+        (possible under load: MSG_SENT and the ACK are dispatched back to
+        back) is still found by _send_direct_with_retry."""
+        code = event.payload.get("code") if isinstance(event.payload, dict) else None
+        if not code:
+            code = (event.attributes or {}).get("code")
+        if not code:
+            return
+        if len(self._recent_acks) >= self._RECENT_ACKS_MAX:
+            oldest = sorted(
+                self._recent_acks, key=lambda k: self._recent_acks[k]
+            )[: self._RECENT_ACKS_MAX // 2]
+            for k in oldest:
+                del self._recent_acks[k]
+        self._recent_acks[code] = time.monotonic()
+        entry = self._pending_acks.get(code)
+        if entry is not None and not entry[0].done():
+            entry[0].set_result(code)
 
     async def _on_mc_connected(self, event):
         """Mark the interface online and log whether this was an initial
@@ -3909,114 +3960,135 @@ class MeshCore_Dynamic_Interface(Interface):
         assert self._mc is not None and self._EventType is not None
         max_direct_attempts = max(1, self.direct_send_attempts)
         last_exc = RuntimeError("direct send failed")
-        consecutive_failures = 0
+        # Only attempts that waited the firmware's FULL suggested ACK time
+        # count as evidence of a stale path (see _maybe_reset_stale_path);
+        # an attempt cut short by our own ceiling proves nothing about the
+        # route.
+        full_wait_failures = 0
+        # One future shared by every attempt of this fragment: the peer's
+        # firmware ACKs each transmission it receives, so an ACK for ANY
+        # attempt's expected_ack code -- including one that lands after
+        # that attempt's own wait already expired -- means the fragment
+        # was delivered.
+        delivered = asyncio.get_running_loop().create_future()
+        codes = []
+        peer = target[:12] if target else "?"
 
-        for attempt in range(1, max_direct_attempts + 1):
-            try:
-                attempt_start = time.monotonic()
-                result = await self._mc.commands.send_msg(target, frag_str)
-                if result is None or result.type != self._EventType.MSG_SENT:
-                    reason = (
-                        result.payload.get("reason", "no path/unknown")
-                        if result is not None else "no response"
+        try:
+            for attempt in range(1, max_direct_attempts + 1):
+                counts_toward_reset = False
+                try:
+                    attempt_start = time.monotonic()
+                    result = await self._mc.commands.send_msg(target, frag_str)
+                    if result is None or result.type != self._EventType.MSG_SENT:
+                        reason = (
+                            result.payload.get("reason", "no path/unknown")
+                            if result is not None else "no response"
+                        )
+                        raise RuntimeError(f"direct send rejected: {reason}")
+
+                    # MSG_SENT confirms the radio put this fragment on air
+                    # (each retry is a real separate transmission) but says
+                    # nothing about delivery: that is the later ACK event
+                    # carrying the expected_ack tag handed back here.
+                    self.stats.record_tx()
+
+                    exp_ack = result.payload.get("expected_ack")
+                    if exp_ack is None:
+                        return
+                    exp_ack_hex = (
+                        exp_ack.hex() if isinstance(exp_ack, (bytes, bytearray))
+                        else str(exp_ack)
                     )
-                    raise RuntimeError(f"direct send rejected: {reason}")
+                    if exp_ack_hex not in codes:
+                        codes.append(exp_ack_hex)
+                    self._pending_acks[exp_ack_hex] = (delivered, attempt_start)
 
-                # MSG_SENT confirms the radio genuinely put this
-                # fragment on air (even though, per the comment
-                # below, it says nothing about delivery) -- count
-                # it here, including retries, since each is a
-                # real separate transmission.
-                self.stats.record_tx()
+                    suggested_ms = result.payload.get("suggested_timeout", 0) or 0
+                    # MSG_SENT's type byte is 1 when the firmware had no
+                    # route and flooded the fragment, 0 when it sent it
+                    # along the cached path -- the two get different
+                    # ceilings (see _configure_fragmentation).
+                    sent_flood = result.payload.get("type") == 1
+                    raw_ack_timeout = max(
+                        self.direct_ack_timeout_s, (suggested_ms / 1000.0) * 1.2
+                    )
+                    ceiling = (
+                        self.direct_ack_timeout_max_s if sent_flood
+                        else self.direct_ack_timeout_routed_max_s
+                    )
+                    ack_timeout = min(raw_ack_timeout, ceiling)
+                    counts_toward_reset = raw_ack_timeout <= ack_timeout
+                    if raw_ack_timeout > ack_timeout:
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"Firmware suggested {suggested_ms}ms ACK timeout for "
+                            f"peer key {peer}... "
+                            f"({'flood/no-path' if sent_flood else 'routed'} send) "
+                            f"-- capping wait at {ack_timeout:.1f}s instead of "
+                            f"{raw_ack_timeout:.1f}s to avoid blocking the "
+                            f"outgoing queue.",
+                            RNS.LOG_INFO
+                        )
 
-                # CORRECTED UNDERSTANDING: MSG_SENT only confirms the
-                # local radio queued the frame for transmission -- it
-                # is NOT end-to-end delivery confirmation. The
-                # firmware hands back an "expected_ack" tag in the
-                # MSG_SENT payload; actual over-air delivery is
-                # confirmed later (if at all) by a separate ACK event
-                # carrying that same tag. Without waiting on it, a
-                # frame that never reaches the peer (out of range,
-                # collision, stale/broken path) is indistinguishable
-                # from one that was delivered.
-                exp_ack = result.payload.get("expected_ack")
-                if exp_ack is None:
+                    # The ACK can be dispatched before this coroutine gets
+                    # to register its code (MSG_SENT and the ACK arrive
+                    # back to back on a 0-hop link) -- check what was
+                    # already heard.
+                    if not delivered.done():
+                        for c in codes:
+                            if c in self._recent_acks:
+                                delivered.set_result(c)
+                                break
+                    try:
+                        acked_code = await asyncio.wait_for(
+                            asyncio.shield(delivered), ack_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        acked_code = None
+                    if acked_code is None:
+                        raise RuntimeError(
+                            f"no delivery ACK within {ack_timeout:.1f}s "
+                            f"(expected_ack={exp_ack_hex}, "
+                            f"firmware suggested {suggested_ms}ms)"
+                        )
+
+                    _, acked_start = self._pending_acks.get(
+                        acked_code, (None, attempt_start)
+                    )
+                    late = "" if acked_code == exp_ack_hex else (
+                        f" -- late ACK for an earlier attempt of this "
+                        f"fragment (expected_ack={acked_code})"
+                    )
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Direct send to peer key {peer}... ACK received "
+                        f"(expected_ack={exp_ack_hex}){late}.",
+                        RNS.LOG_INFO
+                    )
+                    # MeshCore-level latency: send-to-ACK for the
+                    # transmission that was actually acknowledged.
+                    self.stats.record_meshcore_latency(
+                        time.monotonic() - acked_start, peer_key=target
+                    )
                     return
+                except Exception as exc:
+                    last_exc = exc
+                    if counts_toward_reset:
+                        full_wait_failures += 1
+                    if attempt < max_direct_attempts:
+                        RNS.log(
+                            f"MeshCore_Dynamic_Interface [{self.name}]: "
+                            f"DIRECT send attempt {attempt}/{max_direct_attempts} "
+                            f"to peer key {peer}... failed ({exc}) -- retrying.",
+                            RNS.LOG_INFO
+                        )
+                        await self._maybe_reset_stale_path(target, full_wait_failures)
 
-                exp_ack_hex = (
-                    exp_ack.hex() if isinstance(exp_ack, (bytes, bytearray))
-                    else str(exp_ack)
-                )
-                suggested_ms = result.payload.get("suggested_timeout", 0) or 0
-                # NOTE: for a contact with out_path_len == -1 (no known
-                # route -- flood mode), the firmware's suggested_timeout
-                # can be very large, since it has to budget for a full
-                # flood-and-wait cycle. The DIRECT queue has its own
-                # worker task (separate from CHANNEL, see
-                # _async_outgoing_worker) -- an uncapped wait here can
-                # no longer stall channel broadcasts, but it would
-                # still stall every other queued DIRECT fragment
-                # (to this or any other peer) for however long the
-                # firmware suggests, which can be minutes. We
-                # deliberately cap it: our own CHANNEL fallback is
-                # cheap, so there's no reason to let one flood-mode
-                # contact block the rest of the direct queue for as
-                # long as the radio itself would wait.
-                raw_ack_timeout = max(
-                    self.direct_ack_timeout_s, (suggested_ms / 1000.0) * 1.2
-                )
-                ack_timeout = min(raw_ack_timeout, self.direct_ack_timeout_max_s)
-                if raw_ack_timeout > ack_timeout:
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"Firmware suggested {suggested_ms}ms ACK timeout for "
-                        f"peer key {target[:12] if target else '?'}... "
-                        f"(likely flood/no-path) -- capping wait at "
-                        f"{ack_timeout:.1f}s instead of {raw_ack_timeout:.1f}s "
-                        f"to avoid blocking the outgoing queue.",
-                        RNS.LOG_INFO
-                    )
-                ack = await self._mc.dispatcher.wait_for_event(
-                    self._EventType.ACK,
-                    attribute_filters={"code": exp_ack_hex},
-                    timeout=ack_timeout,
-                )
-                if ack is None:
-                    raise RuntimeError(
-                        f"no delivery ACK within {ack_timeout:.1f}s "
-                        f"(expected_ack={exp_ack_hex}, "
-                        f"firmware suggested {suggested_ms}ms)"
-                    )
-
-                #Ack received -- log success and continue to next fragment
-                RNS.log(
-                    f"MeshCore_Dynamic_Interface [{self.name}]: "
-                    f"Direct send to peer key {target[:12] if target else '?'}... "
-                    f"ACK received (expected_ack={exp_ack_hex}).",
-                    RNS.LOG_INFO
-                )
-                # MeshCore-level latency: the raw send-to-ACK
-                # round trip for THIS attempt specifically, not
-                # counting time spent on any earlier failed
-                # attempts for the same fragment.
-                self.stats.record_meshcore_latency(
-                    time.monotonic() - attempt_start, peer_key=target
-                )
-                return
-            except Exception as exc:
-                last_exc = exc
-                consecutive_failures += 1
-                if attempt < max_direct_attempts:
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"DIRECT send attempt {attempt}/{max_direct_attempts} "
-                        f"to peer key {target[:12] if target else '?'}... "
-                        f"failed ({exc}) -- retrying.",
-                        RNS.LOG_INFO
-                    )
-                    await self._maybe_reset_stale_path(target, consecutive_failures)
-
-        raise last_exc
+            raise last_exc
+        finally:
+            for c in codes:
+                self._pending_acks.pop(c, None)
 
     async def _maybe_reset_stale_path(self, target, consecutive_failures: int) -> None:
         """Called from inside _send_direct_with_retry's own retry loop,
@@ -4025,14 +4097,11 @@ class MeshCore_Dynamic_Interface(Interface):
         flood mode before the very next attempt, the same way the
         official meshcore library's send_msg_with_retry resets after
         flood_after (default 2) attempts within ONE message's own retry
-        loop. Previously this interface only considered a reset from a
-        separate cross-PACKET counter requiring an entire packet (all
-        direct_send_attempts) to fail, THEN a second one too, before ever
-        resetting -- ~3x more raw unicast attempts against a possibly-dead
-        path than official's own behavior, verified against real hardware
-        to matter specifically on repeater-relayed (multi-hop) links,
-        where both suggested ACK timeouts and genuine path staleness are
-        more common than on a direct 0-hop link.
+        loop. consecutive_failures counts only attempts that waited the
+        firmware's full suggested ACK time: an attempt our own ceiling cut
+        short says nothing about whether the route is stale, and resetting
+        on that basis is exactly what destroyed working multi-hop routes in
+        field testing.
 
         Resetting is irreversible -- it discards the path both locally and
         on the MeshCore device's own persistent contact record, and forces
@@ -4073,7 +4142,8 @@ class MeshCore_Dynamic_Interface(Interface):
         RNS.log(
             f"MeshCore_Dynamic_Interface [{self.name}]: "
             f"Peer key {target[:12] if target else '?'}... has failed "
-            f"{consecutive_failures} consecutive DIRECT send attempt(s) on "
+            f"{consecutive_failures} consecutive DIRECT send attempt(s), each "
+            f"waiting the firmware's full suggested ACK time, on "
             f"its cached path (out_path_len={opl}, last_rssi="
             f"{last_rssi if last_rssi is not None else 'unknown'}dBm) -- "
             f"resetting to flood mode instead of continuing to retry what "

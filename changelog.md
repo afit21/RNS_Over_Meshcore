@@ -16,6 +16,45 @@ this is the build intended for the next round of field testing
 
 ### Fixed
 
+- **Concurrent radio commands received each other's replies**: the `meshcore`
+  library's `CommandHandler.send()` has no locking and matches a reply by
+  event *type* only -- it subscribes to the expected types, writes the frame,
+  and returns the first such event the dispatcher fans out to every
+  subscriber. This interface ran several commands at once (the DIRECT and
+  CHANNEL send workers, path discovery + flood advert on failure,
+  `reset_path` inside the retry loop, the 30 s contact refresh, the
+  utilization and echo-check stats polls), and `send_msg` and
+  `send_path_discovery` both wait on `MSG_SENT`. The snapshot1 laptop log
+  shows the result four times: a DIRECT attempt logging
+  `firmware suggested 4036ms` on a 3-hop route (every genuine suggestion was
+  14-21 s) in the same second a discovery launched -- the send had adopted
+  the discovery request's tag as its `expected_ack` and could never be
+  ACKed, while the discovery adopted the message's reply and "timed out".
+  Because discovery/advert/reset only fire on failures, and failures only
+  happened over repeaters (see below), the collisions cascaded exactly
+  there and never at 0-1 hops. Fix: every command to the radio now goes
+  through one `asyncio.Lock` (`_install_command_serializer` wraps the
+  library's `send()` itself, so its internal auto-fetch and
+  `ensure_contacts` are covered too). Only the command round trip is held;
+  delivery-ACK waits stay outside the lock.
+- **Delivery ACK ceiling was shorter than the firmware's own estimate on
+  every multi-hop route** (`direct_ack_timeout_max`, 8 s then 10 s): the
+  same log shows the firmware suggesting 10.9 s at 1 hop and 13.7-21.3 s at
+  3 hops, so the interface declared fragments failed before a legitimately
+  in-flight ACK could arrive -- 44 of its 107 ACK timeouts coincide with
+  the transfer node completing a DIRECT packet from the laptop inside that
+  very wait window. The late ACK was then discarded (`_on_msg_ack` was a
+  no-op), the fragment re-sent up to 3x, and after two such truncated waits
+  the working route was wiped by `_maybe_reset_stale_path`. Fix, in three
+  parts: (1) `MSG_SENT`'s type byte says whether the firmware routed or
+  flooded the send, so routed sends now get their own ceiling
+  `direct_ack_timeout_routed_max` (45 s) while only flood-mode sends keep
+  `direct_ack_timeout_max` (10 s); (2) all attempts of a fragment share one
+  delivery record (`_pending_acks`, resolved from `_on_msg_ack`, with a
+  short `_recent_acks` memory for an ACK that beats its registration), so
+  an ACK for an earlier attempt still counts as delivered; (3) only attempts
+  that waited the firmware's full suggested time count toward
+  `direct_path_reset_threshold`.
 - **DIRECT send reliability over repeater-relayed (multi-hop) links**: found
   by comparing against the official meshcore client's own
   `send_msg_with_retry`, after the official MeshCore app was reported to
