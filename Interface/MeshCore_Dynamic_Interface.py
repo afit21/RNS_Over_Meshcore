@@ -784,6 +784,13 @@ class MeshCore_Dynamic_Interface(Interface):
     _SENT_FRAGMENTS_MAX_KEYS = 512
     _SENT_FRAGMENTS_TTL_S    = 300.0
 
+    # Window after sending a CHANNEL packet's first fragment to watch for
+    # a flood_rx counter bump (see _check_heard_repeats) -- long enough to
+    # span typical repeater rebroadcast jitter (firmware randomizes flood
+    # retransmit delay per-hop; not a hard-guaranteed window, just a
+    # practical default).
+    HEARD_REPEATS_WINDOW_S = 6.0
+
     # Cap on _last_unbound_req (opportunistic-REQ throttle per unbound
     # sender name). Otherwise cleaned up only on the 24h peer_ttl_s window
     # like _peer_table, so it has the same unbounded-growth exposure to a
@@ -914,7 +921,19 @@ class MeshCore_Dynamic_Interface(Interface):
         # still stall every other queued DIRECT fragment behind it. Our own
         # CHANNEL fallback is cheap, so we cap the wait and let the fallback
         # handle it instead.
-        self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 8.0))
+        #
+        # The official meshcore client's own send_msg_with_retry applies NO
+        # cap at all -- it always waits the full suggested_timeout*1.2.
+        # This was previously 8.0s, which field-testing against real
+        # hardware showed cutting off entirely ordinary multi-hop cached-path
+        # estimates (observed 9.9-12.4s suggested for a single-repeater
+        # out_path_len=1 route, not even flood mode) -- guaranteed to declare
+        # failure before a legitimately-in-flight ACK could ever arrive.
+        # Raised to comfortably cover realistic multi-hop estimates while
+        # still guarding against the genuinely-pathological flood/no-path
+        # case (which can run into minutes) blocking the DIRECT queue
+        # indefinitely.
+        self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 20.0))
 
     def _configure_path_discovery_and_retry(self, cfg) -> None:
         """Adaptive path-discovery backoff, and retry counts for both path
@@ -3878,14 +3897,19 @@ class MeshCore_Dynamic_Interface(Interface):
         mean the forward frame was lost, so retrying the send itself is
         cheaper and far less airtime-hungry than immediately escalating to
         a broadcast CHANNEL resend. Mirrors send_msg_with_retry's
-        multi-attempt behavior in the official meshcore client. Returns
-        normally on success; raises the last attempt's exception if every
-        attempt failed."""
+        multi-attempt behavior in the official meshcore client -- including
+        now considering a reset-to-flood WITHIN this same retry loop (see
+        _maybe_reset_stale_path) after each failed attempt, the same way
+        official's flood_after does, rather than only after this AND a
+        subsequent packet have both fully failed. Returns normally on
+        success; raises the last attempt's exception if every attempt
+        failed."""
         # Guaranteed non-None here: only called from _send_fragment, which
         # the outgoing worker only invokes after checking both are set.
         assert self._mc is not None and self._EventType is not None
         max_direct_attempts = max(1, self.direct_send_attempts)
         last_exc = RuntimeError("direct send failed")
+        consecutive_failures = 0
 
         for attempt in range(1, max_direct_attempts + 1):
             try:
@@ -3981,6 +4005,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 return
             except Exception as exc:
                 last_exc = exc
+                consecutive_failures += 1
                 if attempt < max_direct_attempts:
                     RNS.log(
                         f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -3989,8 +4014,78 @@ class MeshCore_Dynamic_Interface(Interface):
                         f"failed ({exc}) -- retrying.",
                         RNS.LOG_INFO
                     )
+                    await self._maybe_reset_stale_path(target, consecutive_failures)
 
         raise last_exc
+
+    async def _maybe_reset_stale_path(self, target, consecutive_failures: int) -> None:
+        """Called from inside _send_direct_with_retry's own retry loop,
+        after each failed attempt except the last -- decides whether to
+        give up on this peer's currently cached path and reset it to
+        flood mode before the very next attempt, the same way the
+        official meshcore library's send_msg_with_retry resets after
+        flood_after (default 2) attempts within ONE message's own retry
+        loop. Previously this interface only considered a reset from a
+        separate cross-PACKET counter requiring an entire packet (all
+        direct_send_attempts) to fail, THEN a second one too, before ever
+        resetting -- ~3x more raw unicast attempts against a possibly-dead
+        path than official's own behavior, verified against real hardware
+        to matter specifically on repeater-relayed (multi-hop) links,
+        where both suggested ACK timeouts and genuine path staleness are
+        more common than on a direct 0-hop link.
+
+        Resetting is irreversible -- it discards the path both locally and
+        on the MeshCore device's own persistent contact record, and forces
+        recovery through flood-mode discovery, which is structurally the
+        least reliable of MeshCore's delivery mechanisms over multiple
+        hops. So, as before: be direct_path_reset_patience_multiplier times
+        more patient when the last-polled RSSI still looks reasonable
+        (more likely worth one more retry), and fall back to the
+        unmultiplied threshold when it doesn't, or isn't available yet."""
+        if self.direct_path_reset_threshold <= 0 or self._mc is None:
+            return
+        try:
+            contact = self._mc.get_contact_by_key_prefix(target) if target else None
+        except Exception:
+            contact = None
+        if contact is None:
+            return
+        opl = contact.get("out_path_len", -1)
+        if opl == -1:
+            return  # already flood mode -- nothing cached left to reset
+
+        mesh_util = self.stats.mesh_utilization
+        last_rssi = mesh_util.get("last_rssi") if mesh_util else None
+        conditions_look_ok = (
+            last_rssi is not None and last_rssi > self.direct_path_reset_rssi_floor
+        )
+        effective_threshold = (
+            self.direct_path_reset_threshold * self.direct_path_reset_patience_multiplier
+        ) if conditions_look_ok else self.direct_path_reset_threshold
+
+        if consecutive_failures < effective_threshold:
+            return
+
+        with self._path_req_lock:
+            self._direct_path_failures[target] = (
+                self._direct_path_failures.get(target, 0) + 1
+            )
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Peer key {target[:12] if target else '?'}... has failed "
+            f"{consecutive_failures} consecutive DIRECT send attempt(s) on "
+            f"its cached path (out_path_len={opl}, last_rssi="
+            f"{last_rssi if last_rssi is not None else 'unknown'}dBm) -- "
+            f"resetting to flood mode instead of continuing to retry what "
+            f"looks like a stale route.",
+            RNS.LOG_WARNING
+        )
+        try:
+            await self._mc.commands.reset_path(contact)
+        except Exception as exc:
+            self._debug(
+                f"reset_path failed for {target[:12] if target else '?'}...: {exc}"
+            )
 
     async def _async_outgoing_worker(self, outq):
         """
@@ -4134,7 +4229,7 @@ class MeshCore_Dynamic_Interface(Interface):
         parsed = self._decode_tunnel_fragment(frag_str, self._own_node_name, "CHANNEL-TX")
         if parsed is None:
             return
-        frag_idx, pkt_id, _frag_total, _payload = parsed
+        frag_idx, pkt_id, frag_total, _payload = parsed
         key = (pkt_id, frag_idx)
         with self._sent_channel_fragments_lock:
             if (key not in self._sent_channel_fragments
@@ -4146,6 +4241,79 @@ class MeshCore_Dynamic_Interface(Interface):
                 for k in oldest:
                     del self._sent_channel_fragments[k]
             self._sent_channel_fragments[key] = (len(frag_str), time.monotonic())
+
+        # Once per packet (its first fragment going out), not once per
+        # fragment -- see _check_heard_repeats for why a raw packet-count
+        # delta, not content-echo detection, is what can actually observe
+        # a repeat of our own transmission at all.
+        if frag_idx == 0 and self._loop is not None:
+            asyncio.create_task(self._check_heard_repeats(pkt_id, frag_total))
+
+    async def _check_heard_repeats(self, pkt_id, frag_total: int) -> None:
+        """Detect repeats of our own CHANNEL send the way the raw radio
+        actually can, rather than via message content.
+
+        Traced through the firmware source: Dispatcher::checkRecv()
+        increments n_recv_flood (surfaced as get_stats_packets()'s
+        flood_rx) for every physically-received flood packet BEFORE
+        handing it to Mesh::onRecvPacket() -- which is where the wasSeen()
+        dedup check lives. Mesh::sendFlood() marks our own outgoing packet
+        as already-seen at the moment we send it ("in case it is
+        rebroadcast back to us"), so a nearby repeater relaying our
+        message back to us never reaches onGroupDataRecv() (the source of
+        CHANNEL_MSG_RECV) at all -- it's dropped by that dedup check. But
+        flood_rx already counted it before that check ever ran. So a raw
+        flood_rx delta across a short window after sending is the only
+        way this interface (or any companion app on the same firmware)
+        can observe a repeat of its own message at all.
+
+        Important caveat, logged alongside the result: flood_rx counts
+        ALL flood traffic heard in the window, not verified to be
+        specifically repeats of THIS packet -- any other channel activity
+        from other senders in the same window shows up in the same delta.
+        This is an approximation, not a confirmed per-message repeat
+        count."""
+        if self._mc is None or self._EventType is None:
+            return
+        try:
+            before = await self._mc.commands.get_stats_packets()
+        except Exception as exc:
+            self._debug(f"Heard-repeats check: before-poll failed: {exc}")
+            return
+        if before is None or before.type == self._EventType.ERROR:
+            return
+        before_flood_rx = before.payload.get("flood_rx")
+        if before_flood_rx is None:
+            return
+
+        await asyncio.sleep(self.HEARD_REPEATS_WINDOW_S)
+
+        try:
+            after = await self._mc.commands.get_stats_packets()
+        except Exception as exc:
+            self._debug(f"Heard-repeats check: after-poll failed: {exc}")
+            return
+        if after is None or after.type == self._EventType.ERROR:
+            return
+        after_flood_rx = after.payload.get("flood_rx")
+        if after_flood_rx is None:
+            return
+
+        delta = after_flood_rx - before_flood_rx
+        if delta < 0:
+            return  # device rebooted between polls; counters reset, not meaningful
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Heard {delta} flood packet(s) on the channel in the "
+            f"{self.HEARD_REPEATS_WINDOW_S:.0f}s after sending pkt_id="
+            f"{pkt_id} ({frag_total} fragment(s)) -- NOTE: this counts ALL "
+            f"flood traffic in that window, not confirmed to be "
+            f"specifically repeats of this message (MeshCore's own "
+            f"per-packet dedup means an exact repeat of our own message "
+            f"never reaches this interface's content-level handling, so "
+            f"this raw counter is the closest approximation available).",
+            RNS.LOG_INFO
+        )
 
     def _log_heard_channel_repeat(self, text: str) -> None:
         """Called when a CHANNEL message comes back with our own node name
@@ -4250,60 +4418,18 @@ class MeshCore_Dynamic_Interface(Interface):
                             fut.add_done_callback(
                                 lambda f: self._log_scheduled_task_exceptions(f, "discover_path")
                             )
-
-                    # Separate from discovery above: track repeated
-                    # failures against this peer's CURRENTLY CACHED
-                    # path specifically (0-hop or multi-hop -- any
-                    # opl != -1). Verified empirically on a real
-                    # link: a cached path can go stale (repeater
-                    # repositioned, shorter route now exists) while
-                    # remaining stuck in the contact table, and
-                    # continuing to retry a stale path fails far more
-                    # often than resetting it to flood mode and
-                    # letting the firmware find whatever route
-                    # currently works.
-                    if opl != -1 and self.direct_path_reset_threshold > 0:
-                        with self._path_req_lock:
-                            fail_count = self._direct_path_failures.get(target, 0) + 1
-                            self._direct_path_failures[target] = fail_count
-
-                        # Distinguish "path is genuinely stale" (RF looks
-                        # fine, but this specific route keeps failing) from
-                        # "link is merely degraded right now" (RSSI already
-                        # trending poor) using the last-polled RSSI -- see
-                        # the reasoning in _configure_path_discovery_and_retry.
-                        # No reading yet (mesh_util is None) is treated the
-                        # same as poor conditions, preserving the original
-                        # fast-reset behavior when there's no signal to be
-                        # patient on the strength of.
-                        mesh_util = self.stats.mesh_utilization
-                        last_rssi = mesh_util.get("last_rssi") if mesh_util else None
-                        conditions_look_ok = (
-                            last_rssi is not None
-                            and last_rssi > self.direct_path_reset_rssi_floor
-                        )
-                        effective_threshold = (
-                            self.direct_path_reset_threshold
-                            * self.direct_path_reset_patience_multiplier
-                        ) if conditions_look_ok else self.direct_path_reset_threshold
-
-                        if fail_count >= effective_threshold:
-                            with self._path_req_lock:
-                                self._direct_path_failures[target] = 0
-                            RNS.log(
-                                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                f"Peer key {target[:12] if target else '?'}... has failed "
-                                f"{fail_count} consecutive DIRECT send(s) on its cached "
-                                f"path (out_path_len={opl}, last_rssi="
-                                f"{last_rssi if last_rssi is not None else 'unknown'}dBm) "
-                                f"-- resetting to flood mode instead of continuing to "
-                                f"retry what looks like a stale route.",
-                                RNS.LOG_WARNING
-                            )
-                            if self._loop is not None:
-                                asyncio.run_coroutine_threadsafe(
-                                    self._mc.commands.reset_path(contact), self._loop
-                                )
+                    # NOTE: reset-to-flood on repeated failure used to be
+                    # decided here, from a cross-PACKET counter requiring
+                    # two entire packets (direct_send_attempts each) to
+                    # fully fail before ever resetting -- ~3x more raw
+                    # attempts than the official meshcore client's own
+                    # send_msg_with_retry, which resets after flood_after
+                    # (default 2) attempts WITHIN one message's own retry
+                    # loop. That's now handled by _maybe_reset_stale_path,
+                    # called from inside _send_direct_with_retry itself, so
+                    # by the time we get here a reset may already have
+                    # happened -- opl above already reflects that (reset_path
+                    # updates the local contact dict immediately).
             except Exception:
                 pass
             RNS.log(

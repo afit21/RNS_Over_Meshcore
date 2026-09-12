@@ -16,6 +16,32 @@ this is the build intended for the next round of field testing
 
 ### Fixed
 
+- **DIRECT send reliability over repeater-relayed (multi-hop) links**: found
+  by comparing against the official meshcore client's own
+  `send_msg_with_retry`, after the official MeshCore app was reported to
+  send/receive reliably on the same hardware where this interface's DIRECT
+  sends were failing 100% of the time. Two concrete divergences, both of
+  which specifically worsen with hop count:
+  - `direct_ack_timeout_max` (the hard ceiling on how long to wait for a
+    delivery ACK) defaulted to `8.0s`, while the official client applies no
+    ceiling at all. Field logs showed the firmware suggesting entirely
+    ordinary multi-hop timeouts of 9.9-12.4s for a single-repeater
+    (`out_path_len=1`) route -- our cap was guaranteed to declare failure
+    2-4+ seconds before a legitimately in-flight ACK could ever arrive.
+    Raised to `20.0s`, still well short of the genuinely pathological
+    flood/no-path case (which can run into minutes) that the cap exists to
+    guard against.
+  - Reset-to-flood-mode-on-repeated-failure was previously decided from a
+    cross-*packet* counter requiring an entire packet's `direct_send_attempts`
+    to fail, then a second packet's too, before ever resetting a stale
+    cached path -- about 3x more raw unicast attempts than the official
+    client's own `send_msg_with_retry`, which resets after `flood_after`
+    (default 2) attempts *within one message's own retry loop*. Moved into
+    `_send_direct_with_retry` itself (new `_maybe_reset_stale_path`) so it
+    now triggers on the same per-attempt basis official does, keeping the
+    existing RSSI-gated patience logic (`direct_path_reset_rssi_floor` /
+    `direct_path_reset_patience_multiplier`) but applying it to raw
+    attempts within a single send rather than whole packets.
 - **Peer capability mislabeling** (edge nodes repeatedly relabeled "router"):
   root-caused directly from the snapshot1 field test logs, which showed a
   peer configured `can_route=no` for its entire session getting bound as
