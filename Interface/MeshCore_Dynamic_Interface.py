@@ -4541,7 +4541,7 @@ def z85_encode(data: bytes) -> str:
         out.append("".join(reversed(chars)))
 
     return str(pad) + "".join(out)
-
+#test
 
 def z85_decode(text: str) -> bytes:
     """Inverse of z85_encode. Raises ValueError on malformed input."""
