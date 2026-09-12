@@ -776,6 +776,14 @@ class MeshCore_Dynamic_Interface(Interface):
     # between the periodic cleanup passes.
     _SEEN_PKTS_MAX_KEYS = 1024
 
+    # Cap and TTL for _sent_channel_fragments (heard-repeat/truncation
+    # tracking, see _send_fragment / _process_tunnel_text). Only ever
+    # written from our own sends, but capped for the same reason every
+    # other tracking dict in this file is: defense in depth, not because
+    # it's directly RF-exposed.
+    _SENT_FRAGMENTS_MAX_KEYS = 512
+    _SENT_FRAGMENTS_TTL_S    = 300.0
+
     # Cap on _last_unbound_req (opportunistic-REQ throttle per unbound
     # sender name). Otherwise cleaned up only on the 24h peer_ttl_s window
     # like _peer_table, so it has the same unbounded-growth exposure to a
@@ -1203,6 +1211,17 @@ class MeshCore_Dynamic_Interface(Interface):
         # Sliding time-window cache: (sender, pkt_id) -> expiration_monotonic_timestamp
         self._seen_pkts = {}
         self._seen_lock = threading.Lock()
+
+        # Recently-sent CHANNEL fragments, so that hearing our own message
+        # come back (relayed by a nearby repeater) can be logged and
+        # checked for truncation, instead of being silently dropped as a
+        # self-echo. (pkt_id, frag_idx) -> (sent_char_len, sent_monotonic_ts).
+        # Only ever populated by our own sends, so naturally bounded by our
+        # own send rate rather than exposed to arbitrary RF input -- still
+        # capped defensively and swept on the usual TTL, matching the
+        # pattern used for _seen_pkts.
+        self._sent_channel_fragments = {}
+        self._sent_channel_fragments_lock = threading.Lock()
 
         self._peer_table     = {}
         self._reverse_peers  = {}
@@ -2602,6 +2621,7 @@ class MeshCore_Dynamic_Interface(Interface):
             now = time.monotonic()
             self._cleanup_stale_reassembly(now)
             self._cleanup_expired_dedup(now)
+            self._cleanup_expired_sent_fragments(now)
             self._cleanup_expired_peers(now)
             self._cleanup_rate_limiter_history(now)
             self._cleanup_stale_pending_tokens(now)
@@ -2637,6 +2657,20 @@ class MeshCore_Dynamic_Interface(Interface):
             expired_seen = [k for k, exp in self._seen_pkts.items() if now >= exp]
             for k in expired_seen:
                 del self._seen_pkts[k]
+
+    def _cleanup_expired_sent_fragments(self, now: float) -> None:
+        """Drop sent-CHANNEL-fragment records (see _record_sent_channel_fragment)
+        older than _SENT_FRAGMENTS_TTL_S -- a repeater relay that's going
+        to be heard at all is heard within seconds, not minutes, so this
+        is generous headroom, not a tight budget."""
+        deadline = now - self._SENT_FRAGMENTS_TTL_S
+        with self._sent_channel_fragments_lock:
+            expired = [
+                k for k, (_, ts) in self._sent_channel_fragments.items()
+                if ts < deadline
+            ]
+            for k in expired:
+                del self._sent_channel_fragments[k]
 
     def _cleanup_expired_peers(self, now: float) -> None:
         """Drop peers not heard from within peer_ttl_s, along with their
@@ -3178,6 +3212,8 @@ class MeshCore_Dynamic_Interface(Interface):
         the packet) are passed through to _deliver_reassembled_packet for
         RNS's phy-stats reporting; see the note there."""
         if sender and sender == self._own_node_name:
+            if rx_mode == "CHANNEL":
+                self._log_heard_channel_repeat(text)
             return
 
         parsed = self._decode_tunnel_fragment(text, sender, rx_mode)
@@ -4085,6 +4121,88 @@ class MeshCore_Dynamic_Interface(Interface):
             self.stats.record_tx()
             self.stats.record_flood_tx()
             self._mark_pkt_fragment_done(pkt_id)
+            self._record_sent_channel_fragment(frag_str)
+
+    def _record_sent_channel_fragment(self, frag_str: str) -> None:
+        """Remember one just-sent CHANNEL fragment's (pkt_id, frag_idx) and
+        character length, so that later hearing it echoed back (relayed by
+        a nearby repeater) can be logged and checked for truncation -- see
+        _process_tunnel_text's self-echo branch. Decodes frag_str with the
+        same _decode_tunnel_fragment used on the receive side rather than
+        trusting the pkt_id passed into _send_fragment, since that's None
+        for retransmit-originated fragments (see _delayed_retransmits)."""
+        parsed = self._decode_tunnel_fragment(frag_str, self._own_node_name, "CHANNEL-TX")
+        if parsed is None:
+            return
+        frag_idx, pkt_id, _frag_total, _payload = parsed
+        key = (pkt_id, frag_idx)
+        with self._sent_channel_fragments_lock:
+            if (key not in self._sent_channel_fragments
+                    and len(self._sent_channel_fragments) >= self._SENT_FRAGMENTS_MAX_KEYS):
+                oldest = sorted(
+                    self._sent_channel_fragments,
+                    key=lambda k: self._sent_channel_fragments[k][1]
+                )[: self._SENT_FRAGMENTS_MAX_KEYS // 2]
+                for k in oldest:
+                    del self._sent_channel_fragments[k]
+            self._sent_channel_fragments[key] = (len(frag_str), time.monotonic())
+
+    def _log_heard_channel_repeat(self, text: str) -> None:
+        """Called when a CHANNEL message comes back with our own node name
+        as sender -- i.e. we heard a nearby repeater relay something we
+        sent. Logs whether it came back byte-for-byte intact or shorter
+        than what we actually sent (direct evidence of truncation
+        happening somewhere between us and whatever relayed it, rather
+        than at our own encoding step) -- see the firmware_text_limit
+        investigation in the module docstring. Best-effort: if we don't
+        have a record of the original send (evicted, or from before this
+        process started), still logs the raw length/parseability so a
+        human can compare against other sources."""
+        received_len = len(text)
+        parsed = self._decode_tunnel_fragment(text, self._own_node_name, "CHANNEL-ECHO")
+        if parsed is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Heard our own CHANNEL message repeated, but it no longer "
+                f"decodes ({received_len} chars received) -- likely "
+                f"truncated or corrupted in transit.",
+                RNS.LOG_WARNING
+            )
+            return
+
+        frag_idx, pkt_id, frag_total, _payload = parsed
+        with self._sent_channel_fragments_lock:
+            sent_record = self._sent_channel_fragments.get((pkt_id, frag_idx))
+
+        if sent_record is None:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Heard our own CHANNEL message repeated (pkt_id={pkt_id} "
+                f"frag={frag_idx + 1}/{frag_total}, {received_len} chars) -- "
+                f"no record of the original send length to compare against.",
+                RNS.LOG_INFO
+            )
+            return
+
+        sent_len, _sent_ts = sent_record
+        if received_len == sent_len:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Heard our own CHANNEL message repeated intact (pkt_id="
+                f"{pkt_id} frag={frag_idx + 1}/{frag_total}, {sent_len} "
+                f"chars) -- relay confirmed working at this length.",
+                RNS.LOG_INFO
+            )
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Heard our own CHANNEL message repeated but TRUNCATED "
+                f"(pkt_id={pkt_id} frag={frag_idx + 1}/{frag_total}: sent "
+                f"{sent_len} chars, received {received_len} chars) -- a "
+                f"repeater or firmware in the relay path likely has a "
+                f"lower text-length limit than firmware_text_limit.",
+                RNS.LOG_WARNING
+            )
 
     def _handle_send_failure(self, mode, target, frag_str, priority, queued_at, pkt_id, broadcast, exc) -> None:
         """Handle a _send_fragment failure: for DIRECT, log path
