@@ -933,7 +933,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # still guarding against the genuinely-pathological flood/no-path
         # case (which can run into minutes) blocking the DIRECT queue
         # indefinitely.
-        self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 20.0))
+        self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 10.0))
 
     def _configure_path_discovery_and_retry(self, cfg) -> None:
         """Adaptive path-discovery backoff, and retry counts for both path
