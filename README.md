@@ -133,7 +133,7 @@ Every node needs at minimum a transport block. Channel identity is optional — 
 
     # Fragmentation
     payload_size = 64         # bytes/fragment - see "Payload size" below
-    fragment_delay = 2.5      # seconds between channel-mode fragments
+    fragment_delay = 1.0      # seconds between channel-mode fragments
     direct_frag_delay = 0.5   # seconds between direct-message fragments
     fragment_timeout = 300    # 5-minute reassembly window for high-latency meshes
 
@@ -266,7 +266,7 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `channel_name` | `RNSTunnel` | MeshCore channel name. Leave unset to use the shared default channel. |
 | `channel_secret` | *(shared default)* | MeshCore channel encryption key (32 hex chars). Sharing the default isn't an RNS security concern — see [Configuration](#configuration) — but set your own for a private channel. |
 | `payload_size` | `64` | Fragment payload size in bytes; see [Payload size](#payload-size) |
-| `fragment_delay` | `2.5` | Seconds between channel-mode fragments |
+| `fragment_delay` | `1.0` | Seconds between channel-mode fragments |
 | `direct_frag_delay` | `0.5` | Seconds between direct-message fragments |
 | `fragment_timeout` | `300` | Reassembly window for incomplete multi-fragment packets |
 | `direct_ack_timeout` | `4.0` | Minimum wait for a direct-send delivery ACK |
@@ -279,7 +279,7 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `direct_path_reset_threshold` | `2` | Consecutive fully-exhausted direct-send failures against a peer's *cached* path before resetting it to flood mode (`0` disables) |
 | `stale_fragment_max_age` | `30.0` | Seconds a fragment may sit in the outgoing queue before it's eligible to be dropped (`0` disables) |
 | `stale_fragment_min_queue_depth` | `10` | Fragments must also be backed up at least this many deep before dropping kicks in — age alone is never enough |
-| `contact_refresh_interval` | `120.0` | Seconds between periodic re-fetches of MeshCore's contact list, so cached path info doesn't go stale between events |
+| `contact_refresh_interval` | `30.0` | Seconds between periodic re-fetches of MeshCore's contact list, so cached path info doesn't go stale between events (local query only, no mesh airtime cost) |
 | `outgoing_announce_rate` | `600` | Minimum seconds between announces per destination (`0` disables) |
 | `outgoing_path_req_rate` | `1800` | Minimum seconds between path requests per destination (`0` disables) |
 | `rate_limit` | `0` | Optional hard bandwidth cap in bits/second (`0` disables) |

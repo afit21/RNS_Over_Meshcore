@@ -36,9 +36,13 @@ WIRE FORMAT
 Each RNS binary packet is split into payload-sized chunks.  Each chunk is
 encoded as a MeshCore channel (or direct) message:
 
-    "RNS:" + base64url( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
+    "RNS:" + Z85( [frag_idx:1][pkt_id:4][frag_total:1] + payload )
 
-No base64 padding is transmitted; the receiver restores it before decode.
+Z85 (see z85_encode/z85_decode below) is used instead of base64: it expands
+data by only 25% (5 output chars per 4 input bytes) versus base64's 33%,
+and its alphabet avoids characters MeshCore's text-message framing could
+mistake for delimiters. The first output character is a self-describing
+zero-pad count (0-3), so no separate padding scheme is needed on the wire.
 
 RNS HEADER BYTE BIT LAYOUT (single-header packet, bit 7 = 0)
   bits 7-6 : header type     (0b10 = two-byte header; always broadcast)
@@ -64,16 +68,19 @@ PAYLOAD SIZE
 
       budget = firmware_limit - len(node_name) - 2       (": " separator)
 
-  Encoded message length:
-      msg_len = ceil((payload_size + HEADER_SIZE) * 4/3) + len("RNS:")
+  Encoded message length (Z85: 1 pad-count char + 5 chars per 4 raw bytes,
+  raw bytes rounded up to a multiple of 4 first):
+      msg_len = 1 + 5*ceil((payload_size + HEADER_SIZE) / 4) + len("RNS:")
 
   With a 4-byte pkt_id, HEADER_SIZE is 6 bytes. With default payload_size = 64:
-      msg_len = ceil(70 * 4/3) + 4 = 94 + 4 = 98 chars
-      Safe for node names up to ~28 characters at a 128-char firmware limit.
+      msg_len = 1 + 5*ceil(70/4) + 4 = 1 + 90 + 4 = 95 chars
+      Safe for node names up to ~31 characters at a 128-char firmware limit.
 
-  To calculate the maximum safe payload size for your node name length:
+  To calculate the maximum safe payload size for your node name length (this
+  is exactly what _auto_payload_size() computes at runtime once the node's
+  own name is known, so payload_size rarely needs to be set by hand):
       budget      = firmware_limit - len(node_name) - 2
-      max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
+      max_payload = floor((budget - 5) / 5) * 4 - HEADER_SIZE
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PEER DISCOVERY PROTOCOL
@@ -209,7 +216,7 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
   │                                                                         │
   │     # Fragmentation                                                     │
   │     payload_size = 64      # bytes/fragment (see PAYLOAD SIZE note)    │
-  │     fragment_delay = 2.5   # seconds between channel-mode fragments    │
+  │     fragment_delay = 1.0   # seconds between channel-mode fragments    │
   │     direct_frag_delay = 0.5  # seconds between direct-message frags   │
   │     fragment_timeout = 300   # 5-minute window for high-latency meshes │
   │                                                                         │
@@ -247,6 +254,7 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
 import RNS
 from RNS.Interfaces.Interface import Interface
 import asyncio
+import collections
 import hashlib
 import itertools
 import struct
@@ -267,8 +275,9 @@ class _PacketHandler:
 
         [ frag_idx : 1 byte ] [ pkt_id : 4 bytes ] [ frag_total : 1 byte ]
 
-    followed by the raw payload chunk.  The combined bytes are base64url-
-    encoded (no padding) and prefixed with MSG_PREFIX ("RNS:").
+    followed by the raw payload chunk.  The combined bytes are Z85-encoded
+    (self-describing zero-padding, no separate padding scheme needed) and
+    prefixed with MSG_PREFIX ("RNS:").
     """
 
     HEADER_SIZE  = 6  # 1 byte idx + 4 bytes pkt_id + 1 byte total
@@ -276,6 +285,8 @@ class _PacketHandler:
     MSG_PREFIX   = "RNS:"
 
     def __init__(self, data: bytes, pkt_id: int, payload_size: int = 0):
+        """Split data into PAYLOAD_SIZE-ish chunks and build a header+Z85
+        encoded fragment string for each one."""
         ps = payload_size if payload_size > 0 else self.PAYLOAD_SIZE
         raw_chunks = [data[i:i + ps] for i in range(0, len(data), ps)]
         total = len(raw_chunks)
@@ -288,7 +299,323 @@ class _PacketHandler:
             self.fragments.append(self.MSG_PREFIX + encoded)
 
     def __len__(self):
+        """Number of MeshCore fragments this packet was split into."""
         return len(self.fragments)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session benchmarking stats
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _SlidingWindowCounter:
+    """Tracks timestamped samples and reports their total / average
+    per-second rate within a trailing time window, pruning anything older
+    than the window on every read or write. Used for "over the last N
+    seconds" style stats (current bitrate, flood sends per minute) where a
+    session-long running total or a fixed-bucket peak wouldn't answer "what
+    is it doing *right now*"."""
+
+    def __init__(self, window_s: float):
+        """window_s: how far back samples are kept before aging out."""
+        self.window_s = window_s
+        self._samples = collections.deque()  # (monotonic_ts, amount)
+        self._lock = threading.Lock()
+
+    def _prune(self, now: float) -> None:
+        """Drop samples older than window_s relative to `now`."""
+        cutoff = now - self.window_s
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+
+    def record(self, amount: float = 1) -> None:
+        """Record one sample of `amount` at the current time."""
+        now = time.monotonic()
+        with self._lock:
+            self._samples.append((now, amount))
+            self._prune(now)
+
+    def total(self) -> float:
+        """Sum of all samples still within the trailing window."""
+        now = time.monotonic()
+        with self._lock:
+            self._prune(now)
+            return sum(a for _, a in self._samples)
+
+    def rate_per_sec(self) -> float:
+        """Average per-second rate implied by total() over window_s."""
+        return self.total() / self.window_s
+
+
+class _SessionStats:
+    """
+    Lightweight in-memory benchmarking counters, purely for comparing
+    throughput and reliability across different versions/configurations of
+    this interface during testing. Not persisted anywhere -- resets every
+    time the interface (re)starts, and carries no meaning beyond a single
+    session. Also intended as the eventual data source for automatic
+    tuning of send rates/announce behavior -- see the class-level TODO in
+    the module docstring.
+
+    Peak TX/RX fragments are measured as the highest number of fragments
+    transmitted/received within any single one-second window during the
+    session (a throughput-burst metric), not a queue depth or a running
+    total. Current TX/RX rate is the average bitrate over the trailing 10
+    seconds specifically (RATE_WINDOW_S), separate from the peak-fragments
+    metric above -- one is "how much data is moving right now", the other
+    is "how many individual radio transmissions happened in the busiest
+    second". Direct failure rate is the fraction of direct sends that
+    never got ACK'd after exhausting all retries (see direct_send_attempts)
+    and had to fall back to CHANNEL, tracked both overall and per-peer.
+
+    Two distinct latency metrics are tracked, since they answer different
+    questions: RNS-level TX latency is wall-clock time from
+    processOutgoing() first handing an RNS packet to this interface, to
+    every one of its fragments being finally accounted for (delivered, or
+    given up on for good with nothing further in flight) -- it includes
+    queueing, every retry, and a DIRECT->CHANNEL fallback if one happens.
+    MeshCore-level latency is the send+ACK round trip for a single DIRECT
+    fragment specifically (CHANNEL has no ACK, so there's no equivalent
+    per-fragment RTT to measure there) -- the raw radio/link
+    responsiveness, independent of our own fragmentation or retry logic.
+    """
+
+    BUCKET_SECONDS = 1.0
+    RATE_WINDOW_S  = 10.0
+    FLOOD_WINDOW_S = 60.0
+    LATENCY_SAMPLES_MAX = 200   # bounded memory for rolling latency samples
+
+    def __init__(self):
+        """Initialize all counters, buckets, and sample buffers to zero/empty."""
+        self._lock = threading.Lock()
+        self._session_start = time.monotonic()
+
+        now = time.monotonic()
+        self._tx_bucket_start = now
+        self._tx_bucket_count = 0
+        self.peak_tx_fragments_per_sec = 0
+
+        self._rx_bucket_start = now
+        self._rx_bucket_count = 0
+        self.peak_rx_fragments_per_sec = 0
+
+        # Cumulative RNS payload bytes for the session (mirrors the
+        # interface's own self.txb/self.rxb, kept here too so a single
+        # stats snapshot can report bytes and rates together).
+        self.tx_bytes_total = 0
+        self.rx_bytes_total = 0
+
+        # Trailing-window byte counters for "current" bitrate.
+        self._tx_bytes_window = _SlidingWindowCounter(self.RATE_WINDOW_S)
+        self._rx_bytes_window = _SlidingWindowCounter(self.RATE_WINDOW_S)
+
+        # CHANNEL-mode (flood) fragment sends in the trailing minute.
+        self._flood_tx_window = _SlidingWindowCounter(self.FLOOD_WINDOW_S)
+
+        # Aggregate direct-send outcomes, plus a per-peer breakdown so a
+        # single bad link doesn't get averaged away by otherwise-healthy
+        # ones.
+        self._direct_send_total  = 0
+        self._direct_send_failed = 0
+        self._direct_by_peer = {}   # peer_key -> [total, failed]
+
+        # Latest polled MeshCore firmware radio/packet stats -- reflects
+        # activity from the WHOLE local channel (every node in range), not
+        # just this interface, plus the delta-derived RX duty cycle between
+        # polls. See MeshCore_Dynamic_Interface._poll_mesh_utilization.
+        self.mesh_utilization = None   # dict, or None until first poll
+
+        # Latency samples -- see the class docstring for what each measures.
+        # Bounded deques rather than session-long averages so the reported
+        # numbers track recent behavior rather than being diluted forever
+        # by, e.g., a rough first few minutes while paths were resolving.
+        self._rns_tx_latencies = collections.deque(maxlen=self.LATENCY_SAMPLES_MAX)
+        self._meshcore_latencies = collections.deque(maxlen=self.LATENCY_SAMPLES_MAX)
+        self._meshcore_latencies_by_peer = {}   # peer_key -> deque
+
+    @staticmethod
+    def _roll_bucket(now, bucket_start, bucket_count, peak):
+        """If the current one-second bucket has fully elapsed, fold its
+        count into the running peak and start a fresh bucket. Any fully
+        idle buckets in between are implicitly zero and can't beat an
+        existing peak, so there's no need to iterate one bucket at a time
+        -- just re-anchor the window to now."""
+        if now - bucket_start >= _SessionStats.BUCKET_SECONDS:
+            peak = max(peak, bucket_count)
+            bucket_start = now
+            bucket_count = 0
+        return bucket_start, bucket_count, peak
+
+    def record_tx(self, count: int = 1) -> None:
+        """Count `count` fragment(s) transmitted just now, toward the
+        current one-second bucket (see peak_tx_fragments_per_sec)."""
+        with self._lock:
+            now = time.monotonic()
+            self._tx_bucket_start, self._tx_bucket_count, self.peak_tx_fragments_per_sec = (
+                self._roll_bucket(
+                    now, self._tx_bucket_start, self._tx_bucket_count,
+                    self.peak_tx_fragments_per_sec
+                )
+            )
+            self._tx_bucket_count += count
+
+    def record_rx(self, count: int = 1) -> None:
+        """Count `count` fragment(s) received just now, toward the current
+        one-second bucket (see peak_rx_fragments_per_sec)."""
+        with self._lock:
+            now = time.monotonic()
+            self._rx_bucket_start, self._rx_bucket_count, self.peak_rx_fragments_per_sec = (
+                self._roll_bucket(
+                    now, self._rx_bucket_start, self._rx_bucket_count,
+                    self.peak_rx_fragments_per_sec
+                )
+            )
+            self._rx_bucket_count += count
+
+    def record_flood_tx(self) -> None:
+        """A fragment went out on CHANNEL -- i.e. actually flooded across
+        the mesh, unlike a targeted DIRECT send."""
+        self._flood_tx_window.record(1)
+
+    def record_tx_bytes(self, n: int) -> None:
+        """Add `n` RNS payload bytes to the session TX total and the
+        trailing-window rate counter."""
+        with self._lock:
+            self.tx_bytes_total += n
+        self._tx_bytes_window.record(n)
+
+    def record_rx_bytes(self, n: int) -> None:
+        """Add `n` RNS payload bytes to the session RX total and the
+        trailing-window rate counter."""
+        with self._lock:
+            self.rx_bytes_total += n
+        self._rx_bytes_window.record(n)
+
+    def record_direct_result(self, success: bool, peer_key=None) -> None:
+        """Record the final outcome of one DIRECT send, overall and (if
+        peer_key is given) broken out per peer."""
+        with self._lock:
+            self._direct_send_total += 1
+            if not success:
+                self._direct_send_failed += 1
+            if peer_key:
+                entry = self._direct_by_peer.setdefault(peer_key, [0, 0])
+                entry[0] += 1
+                if not success:
+                    entry[1] += 1
+
+    def set_mesh_utilization(self, data: dict) -> None:
+        """Store the latest polled MeshCore radio/packet stats snapshot."""
+        with self._lock:
+            self.mesh_utilization = data
+
+    def get_current_tx_rate_bps(self) -> float:
+        """Average TX bitrate (bits/sec) over the trailing RATE_WINDOW_S."""
+        return self._tx_bytes_window.rate_per_sec() * 8.0
+
+    def get_current_rx_rate_bps(self) -> float:
+        """Average RX bitrate (bits/sec) over the trailing RATE_WINDOW_S."""
+        return self._rx_bytes_window.rate_per_sec() * 8.0
+
+    def get_flood_messages_last_minute(self) -> int:
+        """Number of CHANNEL (flood) fragment sends in the trailing minute."""
+        return int(self._flood_tx_window.total())
+
+    def get_link_failure_rates(self) -> dict:
+        """{peer_key: {"total": n, "failed": n, "failure_rate_pct": pct}}
+        for every peer that's had at least one direct send attempted this
+        session."""
+        with self._lock:
+            by_peer = {k: tuple(v) for k, v in self._direct_by_peer.items()}
+        return {
+            peer: {
+                "total": total,
+                "failed": failed,
+                "failure_rate_pct": (failed / total * 100.0) if total else 0.0,
+            }
+            for peer, (total, failed) in by_peer.items()
+        }
+
+    def record_rns_tx_latency(self, seconds: float) -> None:
+        """Record one RNS-level TX latency sample (queue-to-delivered)."""
+        with self._lock:
+            self._rns_tx_latencies.append(seconds)
+
+    def record_meshcore_latency(self, seconds: float, peer_key=None) -> None:
+        """Record one MeshCore-level DIRECT send+ACK round-trip sample,
+        overall and (if peer_key is given) broken out per peer."""
+        with self._lock:
+            self._meshcore_latencies.append(seconds)
+            if peer_key:
+                dq = self._meshcore_latencies_by_peer.setdefault(
+                    peer_key, collections.deque(maxlen=self.LATENCY_SAMPLES_MAX)
+                )
+                dq.append(seconds)
+
+    @staticmethod
+    def _latency_summary(samples) -> dict:
+        """Reduce a list of latency samples (seconds) to count/avg/min/max."""
+        if not samples:
+            return {"count": 0, "avg_s": 0.0, "min_s": 0.0, "max_s": 0.0}
+        return {
+            "count": len(samples),
+            "avg_s": sum(samples) / len(samples),
+            "min_s": min(samples),
+            "max_s": max(samples),
+        }
+
+    def get_rns_tx_latency(self) -> dict:
+        """Summary (count/avg/min/max, in seconds) of RNS-level TX latency
+        over the last LATENCY_SAMPLES_MAX packets."""
+        with self._lock:
+            samples = list(self._rns_tx_latencies)
+        return self._latency_summary(samples)
+
+    def get_meshcore_latency(self) -> dict:
+        """Summary (count/avg/min/max, in seconds) of MeshCore-level DIRECT
+        send+ACK round trips over the last LATENCY_SAMPLES_MAX fragments,
+        across all peers."""
+        with self._lock:
+            samples = list(self._meshcore_latencies)
+        return self._latency_summary(samples)
+
+    def get_meshcore_latency_by_peer(self) -> dict:
+        """Same as get_meshcore_latency(), broken out per peer -- useful
+        since RTT varies a lot with hop count and link quality."""
+        with self._lock:
+            by_peer = {k: list(v) for k, v in self._meshcore_latencies_by_peer.items()}
+        return {peer: self._latency_summary(s) for peer, s in by_peer.items()}
+
+    def snapshot(self) -> dict:
+        """Point-in-time view of all tracked stats. Folds in whatever's
+        accumulated in the current, not-yet-elapsed fragment bucket so a
+        burst right before a snapshot isn't missed."""
+        with self._lock:
+            peak_tx     = max(self.peak_tx_fragments_per_sec, self._tx_bucket_count)
+            peak_rx     = max(self.peak_rx_fragments_per_sec, self._rx_bucket_count)
+            total       = self._direct_send_total
+            failed      = self._direct_send_failed
+            uptime      = time.monotonic() - self._session_start
+            tx_bytes    = self.tx_bytes_total
+            rx_bytes    = self.rx_bytes_total
+            mesh_util   = self.mesh_utilization
+        return {
+            "uptime_s": uptime,
+            "peak_tx_fragments_per_sec": peak_tx,
+            "peak_rx_fragments_per_sec": peak_rx,
+            "tx_bytes_total": tx_bytes,
+            "rx_bytes_total": rx_bytes,
+            "tx_rate_bps": self.get_current_tx_rate_bps(),
+            "rx_rate_bps": self.get_current_rx_rate_bps(),
+            "flood_messages_last_minute": self.get_flood_messages_last_minute(),
+            "direct_send_total": total,
+            "direct_send_failed": failed,
+            "direct_failure_rate_pct": (failed / total * 100.0) if total else 0.0,
+            "link_failure_rates": self.get_link_failure_rates(),
+            "mesh_utilization": mesh_util,
+            "rns_tx_latency": self.get_rns_tx_latency(),
+            "meshcore_latency": self.get_meshcore_latency(),
+            "meshcore_latency_by_peer": self.get_meshcore_latency_by_peer(),
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -335,7 +662,7 @@ class MeshCore_Dynamic_Interface(Interface):
     _RNS_DTYPE_LINK   = 0x03
 
     # Outgoing queue priority tiers (lower value = dequeued first, see
-    # queue.PriorityQueue in __init__). LINK_REQUEST and PROOF packets are
+    # queue.PriorityQueue in _init_runtime_state). LINK_REQUEST and PROOF packets are
     # small, latency-sensitive handshake/acknowledgement traffic -- RNS's own
     # Link establishment timeout is only a handful of seconds per hop, so if
     # one of these gets stuck behind a bulk data burst in a FIFO queue, RNS
@@ -361,21 +688,71 @@ class MeshCore_Dynamic_Interface(Interface):
     _PENDING_TOKENS_MAX_SENDERS    = 64
     _PENDING_TOKENS_MAX_PER_SENDER = 16
 
+    # Cap on distinct in-progress (sender, pkt_id) reassembly buffers.
+    # _cleanup_stale_reassembly only runs every 30s (see _cleanup_loop), so
+    # without a cap a nearby transmitter (malicious or just very noisy)
+    # could open unbounded incomplete-fragment buffers in the gap between
+    # cleanup passes -- each holding real payload bytes in memory. Anyone
+    # can transmit on the shared LoRa channel, so this is reachable by any
+    # RF source, not just a bound peer. Oldest-half eviction mirrors the
+    # existing _RNS_MAP_MAX pattern.
+    _ASSEMBLY_MAX_KEYS = 256
+
+    # Cap on distinct bound peers. peer_ttl_s (how long an unheard-from
+    # peer stays bound) defaults to 24h, so without a separate cap here
+    # anyone transmitting forged RNSBIND messages with distinct fake
+    # sender names/keys on the shared channel could grow _peer_table (and
+    # its reverse-lookup/capability/last-seen dicts) without bound for
+    # that entire window. Oldest-by-last-seen eviction, same pattern as
+    # _ASSEMBLY_MAX_KEYS/_RNS_MAP_MAX.
+    _PEER_TABLE_MAX_PEERS = 256
+
+    # Cap on the sliding-window dedup record (_seen_pkts). Legitimate
+    # traffic only ever has a handful of packet IDs in flight within
+    # DEDUPLICATION_TTL_S, but nothing else stops a flood of fabricated
+    # single-fragment packets (trivial to construct -- any valid Z85 text
+    # with a 6+ byte decode and frag_total=1) from growing this dict
+    # between the periodic cleanup passes.
+    _SEEN_PKTS_MAX_KEYS = 1024
+
+    # Cap on _last_unbound_req (opportunistic-REQ throttle per unbound
+    # sender name). Otherwise cleaned up only on the 24h peer_ttl_s window
+    # like _peer_table, so it has the same unbounded-growth exposure to a
+    # flood of fabricated sender names.
+    _UNBOUND_REQ_MAX_SENDERS = 128
+
     # -------------------------------------------------------------------------
     # Constructor
     # -------------------------------------------------------------------------
 
     def __init__(self, owner, configuration):
+        """Parse configuration into typed attributes (grouped into the
+        _configure_* helpers below by concern), initialize internal runtime
+        state, then start the interface's own asyncio event loop and block
+        until async setup (_async_setup) either comes online or times out."""
         super().__init__()
 
         self.owner = owner
         self.name  = configuration.get("name", "MeshCore Dynamic")
         cfg        = configuration
 
-        # --- Transport selection -------------------------------------------
+        self._configure_connection(cfg)
+        self._configure_channel(cfg)
+        self._configure_radio(cfg)
+        self._configure_fragmentation(cfg)
+        self._configure_path_discovery_and_retry(cfg)
+        self._configure_timeouts_and_rate_limits(cfg)
+        self._configure_retransmission(cfg)
+        self._configure_stale_fragment_dropping(cfg)
+        self._configure_routing_and_debug(cfg)
+
+        self._init_runtime_state()
+        self._start_event_loop_and_wait()
+
+    def _configure_connection(self, cfg) -> None:
+        """Transport selection, connection parameters, and auto-reconnect."""
         self.transport = cfg.get("transport", "serial").lower()
 
-        # --- Connection parameters -----------------------------------------
         self.port     = cfg.get("port",     "/dev/ttyUSB0")
         self.baudrate = int(cfg.get("baudrate", 115200))
         self.host     = cfg.get("host",     "127.0.0.1")
@@ -394,7 +771,8 @@ class MeshCore_Dynamic_Interface(Interface):
         )
         self.max_reconnect_attempts = int(cfg.get("max_reconnect_attempts", 3))
 
-        # --- Channel identity ----------------------------------------------
+    def _configure_channel(self, cfg) -> None:
+        """MeshCore channel identity (idx/name/secret)."""
         # Defaults join a shared, public "RNSTunnel" channel so that two
         # nodes running this interface with no channel config at all can
         # find each other with zero coordination. This is deliberate, not
@@ -416,16 +794,28 @@ class MeshCore_Dynamic_Interface(Interface):
             else "b99e9b45f61ab4bd4e355cf812711873"
         )
 
-        # --- Optional radio parameter overrides ----------------------------
+    def _configure_radio(self, cfg) -> None:
+        """Optional radio parameter overrides, and how often to re-poll
+        MeshCore's contact list."""
         self.radio_freq = float(cfg.get("freq", 0))
         self.radio_bw   = float(cfg.get("bw",   0))
         self.radio_sf   = int(cfg.get("sf",     0))
         self.radio_cr   = int(cfg.get("cr",     0))
-        self.contact_refresh_interval = float(cfg.get("contact_refresh_interval", 120.0))
+        # This is a local query against the already-connected MeshCore
+        # device (serial/BLE/TCP), not an over-the-air request -- it costs
+        # no mesh airtime, so it's safe to poll fairly often for fresher
+        # cached path info. 30s while performance is the priority during
+        # development.
+        self.contact_refresh_interval = float(cfg.get("contact_refresh_interval", 30.0))
 
-        # --- Protocol tuning -----------------------------------------------
+    def _configure_fragmentation(self, cfg) -> None:
+        """Fragment payload size, inter-fragment pacing, and DIRECT delivery
+        ACK timeouts."""
         self.payload_size = int(cfg.get("payload_size", 64))
-        self.fragment_delay_s = float(cfg.get("fragment_delay", 2.5))
+        # Pacing between CHANNEL (broadcast) fragments of the same packet --
+        # this one does cost shared mesh airtime, so it's the one to relax
+        # again once we're past the performance-focused development phase.
+        self.fragment_delay_s = float(cfg.get("fragment_delay", 1.0))
 
         raw_dfd = cfg.get("direct_frag_delay", None)
         self.direct_frag_delay_s = float(raw_dfd) if raw_dfd is not None else 0.5
@@ -438,12 +828,17 @@ class MeshCore_Dynamic_Interface(Interface):
 
         # Hard ceiling on that wait, regardless of what the firmware suggests.
         # A contact with no known path (flood mode) can report a suggested
-        # timeout of many seconds to minutes; since the outgoing worker is a
-        # single shared queue, waiting that long would stall every other
-        # queued fragment behind it. Our own CHANNEL fallback is cheap, so we
-        # cap the wait and let the fallback handle it instead.
+        # timeout of many seconds to minutes; the DIRECT queue has its own
+        # worker task (separate from CHANNEL, see _async_outgoing_worker), so
+        # an uncapped wait here can't stall channel broadcasts, but it would
+        # still stall every other queued DIRECT fragment behind it. Our own
+        # CHANNEL fallback is cheap, so we cap the wait and let the fallback
+        # handle it instead.
         self.direct_ack_timeout_max_s = float(cfg.get("direct_ack_timeout_max", 8.0))
 
+    def _configure_path_discovery_and_retry(self, cfg) -> None:
+        """Adaptive path-discovery backoff, and retry counts for both path
+        discovery and DIRECT sends."""
         # Adaptive backoff for MeshCore path-discovery retries per peer.
         # base: cooldown after the first failure. max: ceiling regardless of
         # how many consecutive failures. factor: multiplier applied per
@@ -475,13 +870,16 @@ class MeshCore_Dynamic_Interface(Interface):
         # having used up direct_send_attempts above) against the SAME cached
         # path before we give up trusting that path and reset it to flood
         # mode instead. Verified empirically: a path that's gone stale
-        # (repeater repositioned, shorter route now available) can fail
-        # 100% of the time while remaining stuck in the contact table, and
-        # resetting it to flood mode measurably outperforms continuing to
-        # retry it -- see reset_path usage in _async_outgoing_worker. Set to
-        # 0 to disable (never auto-reset a cached path).
+        # (repeater repositioned, shorter route available) can fail 100% of
+        # the time while remaining stuck in the contact table, and resetting
+        # it to flood mode measurably outperforms continuing to retry it --
+        # see reset_path usage in _async_outgoing_worker. Set to 0 to disable
+        # (never auto-reset a cached path).
         self.direct_path_reset_threshold = int(cfg.get("direct_path_reset_threshold", 2))
 
+    def _configure_timeouts_and_rate_limits(self, cfg) -> None:
+        """Reassembly timeout, optional bandwidth cap, and outgoing
+        announce/path-request rate limiting."""
         # Default adjusted to 300s (5 minutes) for high-latency meshes
         self.fragment_timeout_s = float(cfg.get("fragment_timeout", 300.0))
         self.rate_limit_bps     = int(cfg.get("rate_limit", 0))
@@ -510,7 +908,8 @@ class MeshCore_Dynamic_Interface(Interface):
         # response to be silently dropped. See processOutgoing().
         self._path_response_bypass_s = float(cfg.get("path_response_bypass_window", 15))
 
-        # --- Retransmission for broadcast-only (CHANNEL-forced) packets ----
+    def _configure_retransmission(self, cfg) -> None:
+        """Blind retransmission for broadcast-only (CHANNEL-forced) packets."""
         # ANNOUNCE and path-request (DATA+PLAIN) packets can never use the
         # ACK'd DIRECT path -- they're always raw, unacknowledged CHANNEL
         # fragments (see _is_broadcast_packet / processOutgoing). Losing a
@@ -535,6 +934,10 @@ class MeshCore_Dynamic_Interface(Interface):
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
         self.ordinary_data_retransmit_extra = int(cfg.get("ordinary_data_retransmit_extra", 0))
 
+    def _configure_stale_fragment_dropping(self, cfg) -> None:
+        """When to give up on and drop an outgoing fragment instead of
+        sending it -- see the outgoing-queue-behavior note in the module
+        docstring."""
         # A fragment is dropped instead of transmitted only when BOTH of the
         # following hold: it has sat in its outgoing queue longer than
         # stale_fragment_max_age, AND the queue is still backed up behind it
@@ -557,7 +960,9 @@ class MeshCore_Dynamic_Interface(Interface):
         self.stale_fragment_max_age_s = float(cfg.get("stale_fragment_max_age", 30.0))
         self.stale_fragment_min_queue_depth = int(cfg.get("stale_fragment_min_queue_depth", 10))
 
-        # --- Routing capability --------------------------------------------
+    def _configure_routing_and_debug(self, cfg) -> None:
+        """Routing capability, RNS-core interface-contract attributes
+        (can_route, bitrate), and interface-local debug logging."""
         self.can_route = (
             cfg.get("can_route", "yes").lower() not in ("no", "false", "0")
         )
@@ -567,6 +972,16 @@ class MeshCore_Dynamic_Interface(Interface):
         )
 
         self.peer_ttl_s = float(cfg.get("peer_ttl", 86400))
+
+        # RNS-core interface-contract attribute (not just internal
+        # bookkeeping): RNS.Transport reads interface.bitrate directly to
+        # pace outgoing announces and to estimate per-hop/Link-establishment
+        # timeouts (tx_time = packet_bits / bitrate). Deliberately
+        # conservative relative to raw LoRa PHY rates -- our real achievable
+        # throughput is far lower once Z85 overhead, fragment pacing, and
+        # ACK round trips are accounted for, and understating it keeps RNS
+        # patient (longer computed timeouts) rather than giving up on Links
+        # or path requests too quickly over a slow link.
         self.bitrate = int(cfg.get("bitrate", 300))
 
         # Per-interface debug logging, independent of RNS core's global
@@ -578,21 +993,24 @@ class MeshCore_Dynamic_Interface(Interface):
         # up under the normal loglevel = 4 default without any core noise.
         self.debug_logs = str(cfg.get("debug_level", "info")).strip().lower() == "debug"
 
-        # --- RNS core interface-contract attributes -------------------------
         # RNS core checks `interface.HW_MTU + (interface.ifac_size or 0)` against
         # every inbound packet before it's handed anywhere else — every custom
         # interface must set both or Transport.preprocess_inbound() throws. This
         # is the max size of a single *fully reassembled* RNS packet this
         # interface can carry, not the per-fragment LoRa payload size
         # (self.payload_size handles that).
-        self.HW_MTU    = RNS.Reticulum.MTU
-        
+        self.HW_MTU = RNS.Reticulum.MTU
+
+    def _init_runtime_state(self) -> None:
+        """Initialize all internal mutable state (queues, locks, caches,
+        rate-limiter/peer bookkeeping) ahead of async setup. Pure
+        initialization -- no config parsing, no I/O."""
         # --- Internal async / threading state ------------------------------
         self._mc          = None
         self._EventType   = None
         self._loop        = None
         self._loop_thread = None
-        
+
         # Thread-safe queues used to decouple synchronous execution from the
         # worker loops. DIRECT and CHANNEL traffic get independent queues (and
         # independent worker tasks, see _async_outgoing_worker) so a DIRECT
@@ -615,18 +1033,34 @@ class MeshCore_Dynamic_Interface(Interface):
         self._channel_outqueue = queue.PriorityQueue(maxsize=self.OUTQUEUE_MAXSIZE)
         self._outqueue_seq = itertools.count()
 
+        # In-memory benchmarking counters for comparing versions/configs
+        # across test runs -- see _SessionStats. Purely diagnostic, not used
+        # for any routing/behavioral decisions (yet -- see
+        # _stats_summary_loop).
+        self.stats = _SessionStats()
+        self._last_mesh_poll = None   # (monotonic_ts, data dict) or None
+
+        # Tracks in-flight RNS packets for RNS-level TX latency: pkt_id ->
+        # {"start": monotonic_ts, "remaining": fragments not yet finally
+        # accounted for}. "Finally accounted for" means sent (and ACK'd if
+        # direct), or lost for good with nothing further in flight -- see
+        # _mark_pkt_fragment_done. Retransmit-originated fragments carry
+        # pkt_id=None and are deliberately excluded (see _delayed_retransmits).
+        self._pkt_send_tracking = {}
+        self._pkt_lock = threading.Lock()
+
         self._own_node_name = ""
         self._own_mc_key    = ""
 
         self._pkt_id      = 0
         self._pkt_id_lock = threading.Lock()
 
-        self._assembly      = {}   
-        self._assembly_meta = {}   
+        self._assembly      = {}
+        self._assembly_meta = {}
         self._asm_lock      = threading.Lock()
 
         # Sliding time-window cache: (sender, pkt_id) -> expiration_monotonic_timestamp
-        self._seen_pkts = {}  
+        self._seen_pkts = {}
         self._seen_lock = threading.Lock()
 
         self._peer_table     = {}
@@ -657,9 +1091,9 @@ class MeshCore_Dynamic_Interface(Interface):
         self._last_unbound_req      = {}
         self._last_unbound_req_lock = threading.Lock()
 
-        self._announce_sent_times = {}   
+        self._announce_sent_times = {}
         self._announce_sent_lock  = threading.Lock()
-        self._path_req_sent_times = {}   
+        self._path_req_sent_times = {}
         self._path_req_sent_lock  = threading.Lock()
 
         # dest_id -> monotonic expiry. Set when we observe an inbound path
@@ -668,12 +1102,12 @@ class MeshCore_Dynamic_Interface(Interface):
         self._path_response_pending = {}
         self._path_response_pending_lock = threading.Lock()
 
-        self._has_direct_api    = False  
-        self._pending_resp_task = None  
+        self._has_direct_api    = False
+        self._pending_resp_task = None
 
         self._setup_done = threading.Event()
         self._load_meshcore_or_panic()
-        
+
         #cache of timestamps for the last path request sent to each destination, used to enforce outgoing_path_req_rate
         self._path_req_timestamps = {}
 
@@ -685,7 +1119,7 @@ class MeshCore_Dynamic_Interface(Interface):
         # going to answer, while still periodically re-checking in case
         # conditions change (repeater repositioned, interference clears,
         # etc). Reset to the base cooldown the moment discovery succeeds.
-        # (base/max/factor are set from config above in __init__)
+        # (base/max/factor are set from config in _configure_path_discovery_and_retry)
         self._path_req_failures = {}   # target_key -> consecutive failure count
         self._path_req_lock     = threading.Lock()
 
@@ -697,9 +1131,16 @@ class MeshCore_Dynamic_Interface(Interface):
         # a stale path fails far more often than just resetting it back to
         # flood mode and letting the firmware find whatever route currently
         # works. Reset to 0 the moment a DIRECT send succeeds. See
-        # direct_path_reset_threshold in __init__.
+        # direct_path_reset_threshold (_configure_path_discovery_and_retry).
         self._direct_path_failures = {}   # target_key -> consecutive DIRECT failure count
 
+    def _start_event_loop_and_wait(self) -> None:
+        """Start this interface's own asyncio event loop on a dedicated
+        background thread, schedule _async_setup() onto it, and block the
+        calling (RNS core) thread until setup either completes or times out
+        (SETUP_TIMEOUT_S) -- RNS expects interface construction to be
+        synchronous, so this is the bridge between that and our async
+        MeshCore driver."""
         self._loop = asyncio.new_event_loop()
         assert self._loop is not None
         self._loop_thread = threading.Thread(
@@ -713,6 +1154,9 @@ class MeshCore_Dynamic_Interface(Interface):
         )
 
         def _on_setup_done(fut):
+            # If _async_setup() raised, it never reached self._setup_done.set()
+            # itself -- do that here (after logging the exception) so the
+            # wait() below doesn't just block for the full SETUP_TIMEOUT_S.
             if fut.done() and not fut.cancelled():
                 exc = fut.exception()
                 if exc is not None:
@@ -756,34 +1200,23 @@ class MeshCore_Dynamic_Interface(Interface):
             RNS.log(f"MeshCore_Dynamic_Interface [{self.name}]: {msg}", RNS.LOG_INFO)
 
     def _auto_payload_size(self):
+        """Once our own node name is known, shrink/grow payload_size so a
+        fully Z85-encoded fragment (header + payload + "RNS:" prefix, plus
+        the node name MeshCore prepends on relay) never exceeds the
+        firmware's channel-message character limit. See the module
+        docstring's PAYLOAD SIZE section for the derivation. No-op (returns
+        the configured payload_size unchanged) until the node name is known."""
         if self._own_node_name:
-            # MeshCore firmware silently truncates channel messages that exceed a
-            # hardware-dependent character limit (observed ~128 chars on common
-            # firmware builds). The firmware also prepends the sender's node name
-            # when relaying channel messages, so the effective character budget
-            # for the encoded portion is:
-            #
-            #     budget = firmware_limit - len(node_name) - 2       (": " separator)
-            #
-            # Encoded message length:
-            #     msg_len = ceil((payload_size + HEADER_SIZE) * 4/3) + len("RNS:")
-            #
-            # With a 4-byte pkt_id, HEADER_SIZE is 6 bytes. With default payload_size = 64:
-            #     msg_len = ceil(70 * 4/3) + 4 = 94 + 4 = 98 chars
-            #     Safe for node names up to ~28 characters at a 128-char firmware limit.
-            #
-            # To calculate the maximum safe payload size for your node name length:
-            #     budget      = firmware_limit - len(node_name) - 2
-            #     max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
-
             firmware_limit = 128
             margin = 2 #safety margin for firmware variations and future changes
             budget         = firmware_limit - len(self._own_node_name) - 2
-            max_payload    = ((budget - 4) * 3 // 4 - self.HEADER_SIZE) - margin
+            # Z85 inverse: 1 pad-count char + 5 chars per 4 raw bytes, so
+            # floor((budget-1 pad char)/5) groups of 4 raw bytes each.
+            max_payload    = (((budget - 5) // 5) * 4 - self.HEADER_SIZE) - margin
 
             if max_payload == self.payload_size:
                 return self.payload_size
-            
+
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"Auto-adjusting payload_size from {self.payload_size} "
@@ -793,10 +1226,12 @@ class MeshCore_Dynamic_Interface(Interface):
 
             self.payload_size = max_payload
             return max_payload
-        
+
         return self.payload_size
     
     def _load_meshcore_or_panic(self):
+        """Import the meshcore library, or panic the whole RNS instance if
+        it's not installed -- there's no usable fallback."""
         try:
             import meshcore as _mc_mod
             self._mc_module = _mc_mod
@@ -810,6 +1245,9 @@ class MeshCore_Dynamic_Interface(Interface):
             self.owner.panic()
 
     def _run_loop(self):
+        """Entry point for the dedicated background thread that owns this
+        interface's asyncio event loop; runs it until the interface is torn
+        down."""
         if self._loop is None:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: Loop crashed: no event loop",
@@ -827,9 +1265,46 @@ class MeshCore_Dynamic_Interface(Interface):
             )
 
     async def _async_setup(self):
+        """Asynchronous continuation of __init__ (runs on this interface's
+        own event loop -- see _start_event_loop_and_wait): connects to the
+        configured transport, fetches node identity, applies radio/channel
+        config, detects DIRECT messaging support, subscribes to every event
+        this interface cares about, and starts its background tasks. Each
+        step below is its own _setup_* method. An early return here (only
+        on transport connect failure) leaves self.online False, which
+        _start_event_loop_and_wait treats as a startup failure."""
         MeshCore = self._mc_module.MeshCore
         ET       = self._EventType
 
+        if not await self._setup_connect_transport(MeshCore, ET):
+            return
+
+        await self._setup_fetch_identity()
+        await self._setup_apply_radio_overrides()
+        await self._setup_configure_channel()
+        await self._setup_detect_direct_api()
+        self._setup_subscribe_contact_and_message_events(ET)
+        self._setup_subscribe_lifecycle_events(ET)
+        await self._setup_start_background_tasks()
+
+        self.online = True
+        self._setup_done.set()
+
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Interface ready -- transport={self.transport} "
+            f"can_route={self.can_route} allow_direct={self.allow_direct} "
+            f"direct_api={self._has_direct_api} payload_size={self.payload_size} "
+            f"peer_ttl={self.peer_ttl_s:.0f}s auto_reconnect={self.auto_reconnect}"
+            f"{f'({self.max_reconnect_attempts} attempts)' if self.auto_reconnect else ''} "
+            f"debug_logs={self.debug_logs}.",
+            RNS.LOG_INFO
+        )
+
+    async def _setup_connect_transport(self, MeshCore, ET) -> bool:
+        """Connect to the configured transport (serial/BLE/TCP) and verify
+        the MeshCore driver came up with a usable instance and EventType
+        enum. Returns False (after logging why) if setup should abort."""
         try:
             if self.transport == "serial":
                 self._mc = await MeshCore.create_serial(
@@ -854,13 +1329,13 @@ class MeshCore_Dynamic_Interface(Interface):
                     f"MeshCore_Dynamic_Interface [{self.name}]: "
                     f"Unknown transport '{self.transport}'.", RNS.LOG_ERROR
                 )
-                return
+                return False
         except Exception as exc:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
                 f"Driver init error: {exc}", RNS.LOG_ERROR
             )
-            return
+            return False
 
         if self.transport == "serial":
             conn_desc = f"serial port={self.port} baudrate={self.baudrate}"
@@ -880,7 +1355,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Driver init returned no MeshCore instance.",
                 RNS.LOG_ERROR
             )
-            return
+            return False
 
         if ET is None:
             RNS.log(
@@ -888,11 +1363,18 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"MeshCore EventType is unavailable.",
                 RNS.LOG_ERROR
             )
-            return
+            return False
 
+        return True
+
+    async def _setup_fetch_identity(self) -> None:
+        """Fetch this node's own name/pubkey via send_appstart() -- needed
+        for RNSBIND announcements and payload_size auto-adjustment."""
+        if self._mc is None:
+            return
         try:
             result = await self._mc.commands.send_appstart()
-            if ET and result.type == ET.SELF_INFO:
+            if self._EventType and result.type == self._EventType.SELF_INFO:
                 self._own_node_name = result.payload.get("name", "")
                 self._own_mc_key    = result.payload.get("public_key", "")
                 cap_label = (
@@ -919,6 +1401,11 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Identity fetch failed: {exc}", RNS.LOG_WARNING
             )
 
+    async def _setup_apply_radio_overrides(self) -> None:
+        """Apply freq/bw/sf/cr radio overrides if all four are configured;
+        otherwise leave the node's currently stored radio settings alone."""
+        if self._mc is None:
+            return
         if self.radio_freq and self.radio_bw and self.radio_sf and self.radio_cr:
             try:
                 await self._mc.commands.set_radio(
@@ -945,6 +1432,11 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
+    async def _setup_configure_channel(self) -> None:
+        """Set the MeshCore channel idx/name/secret this interface tunnels
+        RNS traffic over."""
+        if self._mc is None:
+            return
         try:
             secret_bytes = bytes.fromhex(self.channel_secret_hex)
             await self._mc.commands.set_channel(
@@ -974,6 +1466,12 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Channel init error: {exc}", RNS.LOG_WARNING
             )
 
+    async def _setup_detect_direct_api(self) -> None:
+        """Determine whether DIRECT (unicast) messaging is usable: allowed
+        by config, exposed by the meshcore library, and (if so) prime the
+        local contact cache."""
+        if self._mc is None:
+            return
         if self.allow_direct:
             self._has_direct_api = hasattr(self._mc.commands, "send_msg")
             if self._has_direct_api:
@@ -1009,7 +1507,14 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
+    def _setup_subscribe_contact_and_message_events(self, ET) -> None:
+        """Subscribe to channel messages, contact-table updates, direct
+        messages, and delivery ACKs -- whichever of these event types this
+        version of the meshcore library actually exposes."""
+        if self._mc is None:
+            return
         def _channel_msg_callback(e) -> None:
+            """Bridge a sync library callback into our async event loop."""
             if self._loop is not None:
                 asyncio.run_coroutine_threadsafe(
                     self._on_channel_msg(e), self._loop
@@ -1021,6 +1526,7 @@ class MeshCore_Dynamic_Interface(Interface):
         )
 
         def _meshcore_contact_callback(event) -> None:
+            """Bridge a sync contact/advertisement event into the async loop."""
             if self._loop is not None:
                 asyncio.run_coroutine_threadsafe(
                     self._on_meshcore_contact_event(event), self._loop
@@ -1051,6 +1557,7 @@ class MeshCore_Dynamic_Interface(Interface):
             if _direct_recv_et is not None:
                 _direct_recv_name = _name
                 def _direct_msg_callback(e) -> None:
+                    """Bridge a sync direct-message-received event into the async loop."""
                     if self._loop is not None:
                         asyncio.run_coroutine_threadsafe(
                             self._on_direct_msg(e), self._loop
@@ -1084,6 +1591,7 @@ class MeshCore_Dynamic_Interface(Interface):
             _ack_et = getattr(ET, _name, None)
             if _ack_et is not None:
                 def _ack_callback(e) -> None:
+                    """Bridge a sync delivery-ACK event into the async loop."""
                     if self._loop is not None:
                         asyncio.run_coroutine_threadsafe(
                             self._on_msg_ack(e), self._loop
@@ -1113,15 +1621,23 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_WARNING
             )
 
+    def _setup_subscribe_lifecycle_events(self, ET) -> None:
+        """Subscribe to CONNECTED/DISCONNECTED so a dropped serial/BLE/TCP
+        link is actually noticed, rather than the interface sitting
+        "online" with a dead connection underneath."""
+        if self._mc is None:
+            return
         # Connection lifecycle: the meshcore library's connection manager
         # detects a dropped serial/BLE/TCP link and (with auto_reconnect, see
-        # __init__) transparently retries before giving up. Without this
-        # subscription we'd have no idea a USB re-enumeration or BLE range
-        # loss ever happened -- the interface would just sit "online" with a
-        # dead connection underneath, silently failing every send.
+        # _configure_connection) transparently retries before giving up.
+        # Without this subscription we'd have no idea a USB re-enumeration
+        # or BLE range loss ever happened -- the interface would just sit
+        # "online" with a dead connection underneath, silently failing every
+        # send.
         _connected_et = getattr(ET, "CONNECTED", None)
         if _connected_et is not None:
             def _connected_callback(e) -> None:
+                """Bridge a sync CONNECTED event into the async loop."""
                 if self._loop is not None:
                     asyncio.run_coroutine_threadsafe(
                         self._on_mc_connected(e), self._loop
@@ -1131,6 +1647,7 @@ class MeshCore_Dynamic_Interface(Interface):
         _disconnected_et = getattr(ET, "DISCONNECTED", None)
         if _disconnected_et is not None:
             def _disconnected_callback(e) -> None:
+                """Bridge a sync DISCONNECTED event into the async loop."""
                 if self._loop is not None:
                     asyncio.run_coroutine_threadsafe(
                         self._on_mc_disconnected(e), self._loop
@@ -1147,6 +1664,11 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_WARNING
             )
 
+    async def _setup_start_background_tasks(self) -> None:
+        """Start MeshCore's own message-fetching loop, then spawn every
+        long-running background task this interface depends on."""
+        if self._mc is None:
+            return
         await self._mc.start_auto_message_fetching()
 
         asyncio.create_task(self._cleanup_loop())
@@ -1154,24 +1676,11 @@ class MeshCore_Dynamic_Interface(Interface):
         asyncio.create_task(self._async_outgoing_worker(self._direct_outqueue))
         asyncio.create_task(self._async_outgoing_worker(self._channel_outqueue))
         asyncio.create_task(self._contact_refresh_loop())
+        asyncio.create_task(self._stats_summary_loop())
         RNS.log(
             f"MeshCore_Dynamic_Interface [{self.name}]: "
             f"Direct and channel outgoing worker tasks started "
             f"(independent queues, maxsize={self.OUTQUEUE_MAXSIZE} each).",
-            RNS.LOG_INFO
-        )
-
-        self.online = True
-        self._setup_done.set()
-
-        RNS.log(
-            f"MeshCore_Dynamic_Interface [{self.name}]: "
-            f"Interface ready -- transport={self.transport} "
-            f"can_route={self.can_route} allow_direct={self.allow_direct} "
-            f"direct_api={self._has_direct_api} payload_size={self.payload_size} "
-            f"peer_ttl={self.peer_ttl_s:.0f}s auto_reconnect={self.auto_reconnect}"
-            f"{f'({self.max_reconnect_attempts} attempts)' if self.auto_reconnect else ''} "
-            f"debug_logs={self.debug_logs}.",
             RNS.LOG_INFO
         )
 
@@ -1180,6 +1689,7 @@ class MeshCore_Dynamic_Interface(Interface):
     # -------------------------------------------------------------------------
 
     def _own_capability(self) -> str:
+        """This node's RNSBIND capability letter ("R" router / "E" edge)."""
         return self.CAPABILITY_ROUTER if self.can_route else self.CAPABILITY_EDGE
 
     async def _contact_refresh_loop(self):
@@ -1207,7 +1717,158 @@ class MeshCore_Dynamic_Interface(Interface):
             except Exception as exc:
                 self._debug(f"Periodic contact refresh failed: {exc}")
 
+    async def _poll_mesh_utilization(self):
+        """Poll MeshCore's own firmware-level radio/packet counters. These
+        reflect activity from the WHOLE local channel -- every node in
+        range, not just this interface -- which is the cheapest way to get
+        any sense of "how busy is this mesh" without adding passive-
+        monitoring infrastructure of our own: two lightweight command round
+        trips, no different in cost to a handful of the other periodic
+        housekeeping calls this interface already makes. Stores the raw
+        counters plus a delta-derived RX duty-cycle percentage (fraction of
+        wall-clock time spent receiving *anything*, since the last poll)
+        into self.stats for reporting and, eventually, automatic tuning.
+        """
+        if self._mc is None or self._EventType is None:
+            return
+        try:
+            radio_res = await self._mc.commands.get_stats_radio()
+            pkts_res  = await self._mc.commands.get_stats_packets()
+        except Exception as exc:
+            self._debug(f"Mesh utilization poll failed: {exc}")
+            return
+
+        if (
+            radio_res is None or pkts_res is None
+            or radio_res.type == self._EventType.ERROR
+            or pkts_res.type == self._EventType.ERROR
+        ):
+            self._debug("Mesh utilization poll returned no usable data.")
+            return
+
+        radio = radio_res.payload
+        pkts  = pkts_res.payload
+        now   = time.monotonic()
+
+        data = {
+            "noise_floor":  radio.get("noise_floor"),
+            "last_rssi":    radio.get("last_rssi"),
+            "last_snr":     radio.get("last_snr"),
+            "tx_air_secs":  radio.get("tx_air_secs"),
+            "rx_air_secs":  radio.get("rx_air_secs"),
+            "recv":         pkts.get("recv"),
+            "sent":         pkts.get("sent"),
+            "flood_tx":     pkts.get("flood_tx"),
+            "direct_tx":    pkts.get("direct_tx"),
+            "flood_rx":     pkts.get("flood_rx"),
+            "direct_rx":    pkts.get("direct_rx"),
+            "recv_errors":  pkts.get("recv_errors"),
+            "rx_channel_utilization_pct": None,
+        }
+
+        if self._last_mesh_poll is not None:
+            prev_time, prev_data = self._last_mesh_poll
+            elapsed      = now - prev_time
+            prev_rx_air  = prev_data.get("rx_air_secs")
+            cur_rx_air   = data.get("rx_air_secs")
+            if elapsed > 0 and prev_rx_air is not None and cur_rx_air is not None:
+                delta_rx_air = cur_rx_air - prev_rx_air
+                # A negative delta means the device rebooted between polls
+                # (its counters reset to 0) -- skip this cycle rather than
+                # report a nonsensical negative utilization.
+                if delta_rx_air >= 0:
+                    data["rx_channel_utilization_pct"] = min(
+                        100.0, (delta_rx_air / elapsed) * 100.0
+                    )
+
+        self._last_mesh_poll = (now, data)
+        self.stats.set_mesh_utilization(data)
+
+    async def _stats_summary_loop(self):
+        """Every 60s, refresh the mesh-utilization snapshot (see
+        _poll_mesh_utilization) and, only if debug_level = debug, log a
+        full human-readable stats summary. The underlying data is always
+        collected regardless of debug_logs -- it's also the intended input
+        for automatic tuning of send rates/announce behavior later on --
+        only the printing is gated behind debug_logs.
+        """
+        while True:
+            await asyncio.sleep(60)
+            if not self.online or self._mc is None:
+                continue
+
+            await self._poll_mesh_utilization()
+
+            if not self.debug_logs:
+                continue
+
+            s = self.stats.snapshot()
+
+            hops = self.get_peer_hop_counts()
+            hops_str = ", ".join(f"{name}={n}" for name, n in hops.items()) or "none known"
+
+            links_str = ", ".join(
+                f"{key[:12]}...={info['failure_rate_pct']:.0f}% "
+                f"({info['failed']}/{info['total']})"
+                for key, info in s["link_failure_rates"].items()
+            ) or "no direct sends yet"
+
+            mesh = s["mesh_utilization"]
+            if mesh is not None and mesh.get("rx_channel_utilization_pct") is not None:
+                mesh_str = (
+                    f"noise_floor={mesh['noise_floor']}dBm "
+                    f"last_rssi={mesh['last_rssi']}dBm last_snr={mesh['last_snr']}dB "
+                    f"rx_channel_util={mesh['rx_channel_utilization_pct']:.1f}% "
+                    f"(ALL traffic on this channel, not just ours) "
+                    f"recv={mesh['recv']} sent={mesh['sent']} "
+                    f"recv_errors={mesh['recv_errors']}"
+                )
+            else:
+                mesh_str = "not yet available"
+
+            self._debug(
+                f"[STATS] uptime={s['uptime_s']:.0f}s -- "
+                f"TX: {s['tx_bytes_total']}B total, {s['tx_rate_bps']:.0f}bps "
+                f"(10s avg), peak {s['peak_tx_fragments_per_sec']} frag/s -- "
+                f"RX: {s['rx_bytes_total']}B total, {s['rx_rate_bps']:.0f}bps "
+                f"(10s avg), peak {s['peak_rx_fragments_per_sec']} frag/s -- "
+                f"flood sends (last 60s): {s['flood_messages_last_minute']}"
+            )
+            self._debug(
+                f"[STATS] direct sends: {s['direct_send_total']} total, "
+                f"{s['direct_send_failed']} failed "
+                f"({s['direct_failure_rate_pct']:.1f}%) -- "
+                f"per-link failure rate: {links_str}"
+            )
+
+            rns_lat = s["rns_tx_latency"]
+            mc_lat  = s["meshcore_latency"]
+            mc_lat_by_peer = s["meshcore_latency_by_peer"]
+            mc_lat_str = ", ".join(
+                f"{key[:12]}...avg={info['avg_s']*1000:.0f}ms"
+                for key, info in mc_lat_by_peer.items()
+            ) or "no direct ACKs yet"
+            self._debug(
+                f"[STATS] RNS-level TX latency (queue-to-delivered, "
+                f"n={rns_lat['count']}): "
+                f"avg={rns_lat['avg_s']*1000:.0f}ms "
+                f"min={rns_lat['min_s']*1000:.0f}ms "
+                f"max={rns_lat['max_s']*1000:.0f}ms -- "
+                f"MeshCore-level DIRECT send+ACK RTT (n={mc_lat['count']}): "
+                f"avg={mc_lat['avg_s']*1000:.0f}ms "
+                f"min={mc_lat['min_s']*1000:.0f}ms "
+                f"max={mc_lat['max_s']*1000:.0f}ms -- per-link: {mc_lat_str}"
+            )
+
+            self._debug(
+                f"[STATS] peer hops: {hops_str} -- "
+                f"local mesh utilization: {mesh_str}"
+            )
+
     async def _bind_discovery_loop(self):
+        """Periodically broadcast RNSBIND_REQ while we have no known peers,
+        then settle into a slower RNSBIND heartbeat once we do, so peers can
+        discover/rediscover each other's capability over the channel."""
         await asyncio.sleep(5)  # Let connection settle
         if self._mc is None:
             return
@@ -1251,6 +1912,8 @@ class MeshCore_Dynamic_Interface(Interface):
                 await asyncio.sleep(self.BIND_HEARTBEAT_S)
 
     async def _delayed_bind_response(self):
+        """Wait a random backoff, then broadcast our RNSBIND response --
+        spreads out replies when multiple peers answer the same REQ at once."""
         delay = random.uniform(self.BIND_BACKOFF_MIN, self.BIND_BACKOFF_MAX)
         await asyncio.sleep(delay)
         if not self.online or not self._own_mc_key or self._mc is None:
@@ -1286,6 +1949,12 @@ class MeshCore_Dynamic_Interface(Interface):
             last = self._last_unbound_req.get(sender, 0)
             if now - last < self.UNBOUND_REQ_RETRY_S:
                 return
+            if sender not in self._last_unbound_req and len(self._last_unbound_req) >= self._UNBOUND_REQ_MAX_SENDERS:
+                oldest = sorted(
+                    self._last_unbound_req, key=lambda k: self._last_unbound_req[k]
+                )[: self._UNBOUND_REQ_MAX_SENDERS // 2]
+                for k in oldest:
+                    del self._last_unbound_req[k]
             self._last_unbound_req[sender] = now
 
         if not self.online or not self._own_mc_key or self._mc is None:
@@ -1321,6 +1990,9 @@ class MeshCore_Dynamic_Interface(Interface):
         return min(cooldown, self._path_discovery_max_cooldown_s)
 
     def _record_path_discovery_result(self, target_key: str, success: bool) -> None:
+        """Update the consecutive-failure counter behind
+        _path_discovery_cooldown_for's backoff: reset on success, increment
+        on failure."""
         with self._path_req_lock:
             if success:
                 # Any success resets the peer back to fast retries -- the
@@ -1332,6 +2004,10 @@ class MeshCore_Dynamic_Interface(Interface):
                 )
 
     async def discover_path(self, contact):
+        """Run a one-shot MeshCore path-discovery query for this contact and
+        return the resolved out_path (or None on failure/timeout). Does not
+        update the device's own persistent contact table -- see the comment
+        below on send_path_discovery_sync's firmware behavior."""
         if self._mc is None:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -1467,119 +2143,144 @@ class MeshCore_Dynamic_Interface(Interface):
     # -------------------------------------------------------------------------
     
     async def _cleanup_loop(self):
+        """Runs every 30s for the life of the interface: sweeps expired
+        state out of the reassembly buffers, dedup cache, peer table,
+        rate-limiter history, and pending-token bookkeeping, so none of it
+        grows unbounded over a long-running session. Each sweep is
+        independent -- see the individual _cleanup_* methods."""
         while True:
-            await asyncio.sleep(30)  
+            await asyncio.sleep(30)
             now = time.monotonic()
+            self._cleanup_stale_reassembly(now)
+            self._cleanup_expired_dedup(now)
+            self._cleanup_expired_peers(now)
+            self._cleanup_rate_limiter_history(now)
+            self._cleanup_stale_pending_tokens(now)
+            self._cleanup_expired_path_response_pending(now)
 
-            # --- Stale fragment buffers ------------------------------------
-            frag_deadline = now - self.fragment_timeout_s
-            with self._asm_lock:
-                stale = [
-                    k for k, (_, ts) in self._assembly_meta.items()
-                    if ts < frag_deadline
-                ]
-                for k in stale:
-                    sender, pkt_id = k
-                    got, total = len(self._assembly[k]), self._assembly_meta[k][0]
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"Dropping incomplete reassembly for pkt_id {pkt_id} "
-                        f"from '{sender}' -- only {got}/{total} fragment(s) "
-                        f"arrived within {self.fragment_timeout_s:.0f}s.",
-                        RNS.LOG_INFO
-                    )
-                    del self._assembly[k]
-                    del self._assembly_meta[k]
+    def _cleanup_stale_reassembly(self, now: float) -> None:
+        """Drop incomplete multi-fragment reassembly buffers that have been
+        waiting longer than fragment_timeout_s -- the remaining fragments
+        clearly aren't coming."""
+        frag_deadline = now - self.fragment_timeout_s
+        with self._asm_lock:
+            stale = [
+                k for k, (_, ts) in self._assembly_meta.items()
+                if ts < frag_deadline
+            ]
+            for k in stale:
+                sender, pkt_id = k
+                got, total = len(self._assembly[k]), self._assembly_meta[k][0]
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Dropping incomplete reassembly for pkt_id {pkt_id} "
+                    f"from '{sender}' -- only {got}/{total} fragment(s) "
+                    f"arrived within {self.fragment_timeout_s:.0f}s.",
+                    RNS.LOG_INFO
+                )
+                del self._assembly[k]
+                del self._assembly_meta[k]
 
-            # --- Expired sliding window deduplication records --------------
-            with self._seen_lock:
-                expired_seen = [k for k, exp in self._seen_pkts.items() if now >= exp]
-                for k in expired_seen:
-                    del self._seen_pkts[k]
+    def _cleanup_expired_dedup(self, now: float) -> None:
+        """Drop sliding-window duplicate-packet records once their
+        suppression window has elapsed."""
+        with self._seen_lock:
+            expired_seen = [k for k, exp in self._seen_pkts.items() if now >= exp]
+            for k in expired_seen:
+                del self._seen_pkts[k]
 
-            # --- Expired peers ---------------------------------------------
-            peer_deadline = now - self.peer_ttl_s
-            with self._peer_lock:
-                expired = [
-                    name for name, ts in self._peer_last_seen.items()
-                    if ts < peer_deadline
-                ]
-                for name in expired:
-                    mc_key = self._peer_table.pop(name, None)
-                    self._peer_last_seen.pop(name, None)
-                    self._peer_caps.pop(name, None)
-                    if mc_key:
-                        self._reverse_peers.pop(mc_key, None)
-                        for pfx_len in (8, 12, 16, 24):
-                            self._reverse_peers.pop(mc_key[:pfx_len], None)
-                        stale_tokens = [
-                            t for t, k in self._rns_to_mc_map.items()
-                            if k == mc_key
-                        ]
-                        for t in stale_tokens:
-                            del self._rns_to_mc_map[t]
-                if expired:
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"Expired {len(expired)} stale peer(s).",
-                        RNS.LOG_INFO
-                    )
-
-            # --- Old announce rate entries ---------------------------------
-            if self._announce_rate_s > 0:
-                ar_deadline = now - (self._announce_rate_s * 2)
-                with self._announce_sent_lock:
-                    stale_ar = [
-                        k for k, ts in self._announce_sent_times.items()
-                        if ts < ar_deadline
+    def _cleanup_expired_peers(self, now: float) -> None:
+        """Drop peers not heard from within peer_ttl_s, along with their
+        reverse-lookup and RNS-token-to-MeshCore-key mappings."""
+        peer_deadline = now - self.peer_ttl_s
+        with self._peer_lock:
+            expired = [
+                name for name, ts in self._peer_last_seen.items()
+                if ts < peer_deadline
+            ]
+            for name in expired:
+                mc_key = self._peer_table.pop(name, None)
+                self._peer_last_seen.pop(name, None)
+                self._peer_caps.pop(name, None)
+                if mc_key:
+                    self._reverse_peers.pop(mc_key, None)
+                    for pfx_len in (8, 12, 16, 24):
+                        self._reverse_peers.pop(mc_key[:pfx_len], None)
+                    stale_tokens = [
+                        t for t, k in self._rns_to_mc_map.items()
+                        if k == mc_key
                     ]
-                    for k in stale_ar:
-                        del self._announce_sent_times[k]
+                    for t in stale_tokens:
+                        del self._rns_to_mc_map[t]
+            if expired:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Expired {len(expired)} stale peer(s).",
+                    RNS.LOG_INFO
+                )
 
-            # --- Old path request rate entries ----------------------------
-            if self._path_req_rate_s > 0:
-                pr_deadline = now - (self._path_req_rate_s * 2)
-                with self._path_req_sent_lock:
-                    stale_pr = [
-                        k for k, (_, last_ts) in self._path_req_sent_times.items()
-                        if last_ts < pr_deadline
-                    ]
-                    for k in stale_pr:
-                        del self._path_req_sent_times[k]
-
-            # --- Stale pending-token / opportunistic-req bookkeeping --------
-            # For senders that stashed tokens but never completed RNSBIND
-            # (e.g. they went out of range for good). Uses the same
-            # peer_ttl_s window as bound peers.
-            with self._last_unbound_req_lock:
-                stale_unbound = [
-                    name for name, ts in self._last_unbound_req.items()
-                    if ts < peer_deadline
+    def _cleanup_rate_limiter_history(self, now: float) -> None:
+        """Drop per-destination announce/path-request rate-limiter
+        timestamps once they're old enough to no longer affect a future
+        rate decision (2x the configured rate window)."""
+        if self._announce_rate_s > 0:
+            ar_deadline = now - (self._announce_rate_s * 2)
+            with self._announce_sent_lock:
+                stale_ar = [
+                    k for k, ts in self._announce_sent_times.items()
+                    if ts < ar_deadline
                 ]
+                for k in stale_ar:
+                    del self._announce_sent_times[k]
+
+        if self._path_req_rate_s > 0:
+            pr_deadline = now - (self._path_req_rate_s * 2)
+            with self._path_req_sent_lock:
+                stale_pr = [
+                    k for k, (_, last_ts) in self._path_req_sent_times.items()
+                    if last_ts < pr_deadline
+                ]
+                for k in stale_pr:
+                    del self._path_req_sent_times[k]
+
+    def _cleanup_stale_pending_tokens(self, now: float) -> None:
+        """Drop bookkeeping for senders that stashed pending RNS tokens but
+        never completed an RNSBIND handshake within peer_ttl_s (e.g. they
+        went out of range for good)."""
+        peer_deadline = now - self.peer_ttl_s
+        with self._last_unbound_req_lock:
+            stale_unbound = [
+                name for name, ts in self._last_unbound_req.items()
+                if ts < peer_deadline
+            ]
+            for name in stale_unbound:
+                del self._last_unbound_req[name]
+        if stale_unbound:
+            with self._pending_tokens_lock:
                 for name in stale_unbound:
-                    del self._last_unbound_req[name]
-            if stale_unbound:
-                with self._pending_tokens_lock:
-                    for name in stale_unbound:
-                        self._pending_tokens.pop(name, None)
+                    self._pending_tokens.pop(name, None)
 
-            # --- Expired path-response bypass entries -----------------------
-            # Cleans up cases where the expected outgoing announce never
-            # happened (e.g. we don't actually own/have a path to the
-            # requested destination), so entries don't accumulate forever.
-            with self._path_response_pending_lock:
-                stale_prp = [
-                    k for k, expiry in self._path_response_pending.items()
-                    if now >= expiry
-                ]
-                for k in stale_prp:
-                    del self._path_response_pending[k]
+    def _cleanup_expired_path_response_pending(self, now: float) -> None:
+        """Drop path-response-bypass entries whose window elapsed without
+        the expected outgoing announce ever happening (e.g. we don't
+        actually own/have a path to the requested destination), so entries
+        don't accumulate forever."""
+        with self._path_response_pending_lock:
+            stale_prp = [
+                k for k, expiry in self._path_response_pending.items()
+                if now >= expiry
+            ]
+            for k in stale_prp:
+                del self._path_response_pending[k]
 
     # -------------------------------------------------------------------------
     # Inbound event handlers
     # -------------------------------------------------------------------------
 
     async def _on_channel_msg(self, event):
+        """Dispatch an incoming channel broadcast: RNSBIND/RNSBIND_REQ
+        messages go to _handle_bind, RNS-tunneled text goes to
+        _process_tunnel_text. Ignores anything matching neither prefix."""
         text = event.payload.get("text", "")
 
         rns_idx  = text.find(self.MSG_PREFIX)      
@@ -1601,6 +2302,9 @@ class MeshCore_Dynamic_Interface(Interface):
             await self._process_tunnel_text(text[rns_idx:], sender, rx_mode="CHANNEL")
 
     async def _on_direct_msg(self, event):
+        """Dispatch an incoming DIRECT message: ignore anything without our
+        RNS tunnel prefix, otherwise resolve the sender and hand the text to
+        _process_tunnel_text."""
         payload = event.payload
         sender_key = (
             payload.get("pubkey_prefix") or payload.get("sender_pubkey") or
@@ -1613,9 +2317,15 @@ class MeshCore_Dynamic_Interface(Interface):
         await self._process_tunnel_text(text, sender_id, rx_mode="DIRECT")
 
     async def _on_msg_ack(self, event):
+        """No-op subscriber. ACKs are actually consumed via a targeted
+        mc.dispatcher.wait_for_event(EventType.ACK, ...) in
+        _send_direct_with_retry; this subscription only exists so the
+        library doesn't warn about an unhandled ACK event type."""
         pass
 
     async def _on_mc_connected(self, event):
+        """Mark the interface online and log whether this was an initial
+        connect or a recovery from a dropped link."""
         payload = getattr(event, "payload", {}) or {}
         was_offline = not self.online
         self.online = True
@@ -1633,6 +2343,7 @@ class MeshCore_Dynamic_Interface(Interface):
             )
 
     async def _on_mc_disconnected(self, event):
+        """Mark the interface offline and log why the underlying link dropped."""
         payload = getattr(event, "payload", {}) or {}
         reason = payload.get("reason", "unknown")
         self.online = False
@@ -1646,14 +2357,51 @@ class MeshCore_Dynamic_Interface(Interface):
             RNS.LOG_WARNING
         )
 
+    def _evict_oldest_peers_locked(self, count: int) -> None:
+        """Drop the `count` least-recently-seen peers, along with their
+        reverse-lookup/capability/token mappings. Caller must already hold
+        self._peer_lock (mirrors the field cleanup in
+        _cleanup_expired_peers, just picked by rank instead of TTL)."""
+        oldest = sorted(
+            self._peer_last_seen.keys(),
+            key=lambda n: self._peer_last_seen[n]
+        )[:count]
+        for name in oldest:
+            mc_key = self._peer_table.pop(name, None)
+            self._peer_last_seen.pop(name, None)
+            self._peer_caps.pop(name, None)
+            if mc_key:
+                self._reverse_peers.pop(mc_key, None)
+                for pfx_len in (8, 12, 16, 24):
+                    self._reverse_peers.pop(mc_key[:pfx_len], None)
+                stale_tokens = [
+                    t for t, k in self._rns_to_mc_map.items()
+                    if k == mc_key
+                ]
+                for t in stale_tokens:
+                    del self._rns_to_mc_map[t]
+        if oldest:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Peer table at capacity ({self._PEER_TABLE_MAX_PEERS}) -- "
+                f"evicted {len(oldest)} least-recently-seen peer(s).",
+                RNS.LOG_WARNING
+            )
+
     def _register_peer_binding(self, sender_name: str, mc_pubkey: str,
                               can_route: bool = True):
+        """Record/update the RNS-name <-> MeshCore-pubkey binding for a peer
+        (plus reverse-lookup prefixes and capability), logging only when
+        something actually changed. Returns whether it changed."""
         if not sender_name or not mc_pubkey:
             return False
 
         with self._peer_lock:
             existing    = self._peer_table.get(sender_name)
             cap_changed = self._peer_caps.get(sender_name) != can_route
+
+            if existing is None and len(self._peer_table) >= self._PEER_TABLE_MAX_PEERS:
+                self._evict_oldest_peers_locked(self._PEER_TABLE_MAX_PEERS // 2)
 
             if existing != mc_pubkey:
                 self._peer_table[sender_name]  = mc_pubkey
@@ -1677,6 +2425,9 @@ class MeshCore_Dynamic_Interface(Interface):
         return changed
 
     async def _handle_bind(self, text: str, bind_idx: int, req_idx: int = -1):
+        """Parse an RNSBIND/RNSBIND_REQ channel message, register the peer
+        binding, backfill any RNS tokens received before we knew this
+        sender's key, and (for a REQ) schedule our own delayed response."""
         is_req  = (req_idx != -1 and (bind_idx == -1 or req_idx <= bind_idx))
         prefix  = self.BIND_REQ_PREFIX if is_req else self.BIND_PREFIX
         pfx_idx = req_idx              if is_req else bind_idx
@@ -1762,6 +2513,8 @@ class MeshCore_Dynamic_Interface(Interface):
         )
 
     def _bind_meshcore_contact(self, contact, source: str = "contact event"):
+        """Extract a peer's key/name/routing-capability from a raw MeshCore
+        contact dict and register the binding; logs any path change too."""
         if not isinstance(contact, dict):
             return
 
@@ -1797,6 +2550,9 @@ class MeshCore_Dynamic_Interface(Interface):
             self._register_peer_binding(name, key, cap_value)
 
     async def _on_meshcore_contact_event(self, event):
+        """Normalize the several possible contact-event payload shapes
+        (single contact dict, dict-of-contacts, or list/tuple/set) and bind
+        each one via _bind_meshcore_contact."""
         source = str(getattr(event, "type", "contact event"))
         payload = getattr(event, "payload", None)
         if isinstance(payload, dict):
@@ -1810,6 +2566,9 @@ class MeshCore_Dynamic_Interface(Interface):
                 self._bind_meshcore_contact(contact, source)
 
     def _resolve_sender_key(self, key_str: str) -> str:
+        """Resolve a MeshCore pubkey/prefix to its bound RNS peer name,
+        falling back to a prefix match and finally to the raw key string
+        if no binding is known."""
         if not key_str:
             return key_str
         with self._peer_lock:
@@ -1821,10 +2580,114 @@ class MeshCore_Dynamic_Interface(Interface):
                     return stored_name
         return key_str
 
+    def get_peer_hop_counts(self) -> dict:
+        """{peer_name: out_path_len} for every currently bound peer, read
+        live from MeshCore's own contact cache (no I/O -- safe to call from
+        any thread). -1 means unknown/flood (no resolved path yet).
+
+        Note this is MeshCore-level hop count (LoRa repeater hops), not RNS
+        hop count -- RNS itself always sees exactly one hop through this
+        interface no matter how many repeaters a MeshCore path actually
+        takes, so MeshCore's own path length is the only hop-count number
+        that's actually meaningful here."""
+        result = {}
+        if self._mc is None:
+            return result
+        with self._peer_lock:
+            peers = dict(self._peer_table)   # sender_name -> mc_pubkey
+        for name, mc_key in peers.items():
+            contact = self._mc.get_contact_by_key_prefix(mc_key)
+            result[name] = contact.get("out_path_len", -1) if contact else -1
+        return result
+
+    def _register_pkt_send(self, pkt_id: int, fragment_count: int) -> None:
+        """Called once per outgoing RNS packet (from processOutgoing), to
+        start RNS-level TX latency tracking for it. fragment_count is how
+        many fragments must each be finally accounted for (see
+        _mark_pkt_fragment_done) before the packet is considered done."""
+        if pkt_id is None or fragment_count <= 0:
+            return
+        with self._pkt_lock:
+            self._pkt_send_tracking[pkt_id] = {
+                "start": time.monotonic(),
+                "remaining": fragment_count,
+            }
+
+    def _mark_pkt_fragment_done(self, pkt_id) -> None:
+        """Called whenever a fragment has been *finally* handled -- sent
+        (and ACK'd if direct), or lost for good with nothing further in
+        flight for it (a DIRECT failure that's about to be retried via
+        CHANNEL is NOT final -- don't call this until the CHANNEL attempt
+        itself resolves). Once every fragment of the packet has been
+        accounted for, records the total elapsed time as this send's
+        RNS-level TX latency. Fragments from retransmit passes carry
+        pkt_id=None and are silently ignored, since they're extra copies
+        of an already-completed original, not a new packet to track."""
+        if pkt_id is None:
+            return
+        start = None
+        with self._pkt_lock:
+            entry = self._pkt_send_tracking.get(pkt_id)
+            if entry is None:
+                return
+            entry["remaining"] -= 1
+            if entry["remaining"] <= 0:
+                start = entry["start"]
+                del self._pkt_send_tracking[pkt_id]
+        if start is not None:
+            self.stats.record_rns_tx_latency(time.monotonic() - start)
+
     async def _process_tunnel_text(self, text: str, sender: str = "", rx_mode: str = "UNKNOWN"):
+        """Decode one Z85-encoded RNS-tunnel fragment, dedupe it, feed it
+        into the reassembly buffer for its packet ID, and hand the
+        reassembled RNS packet to processIncoming once all fragments have
+        arrived. Drops anything unparsable, too short, or already seen."""
         if sender and sender == self._own_node_name:
             return
 
+        parsed = self._decode_tunnel_fragment(text, sender, rx_mode)
+        if parsed is None:
+            return
+        frag_idx, pkt_id, frag_total, payload = parsed
+
+        # Counted here rather than after dedup/reassembly: this is a
+        # structurally valid fragment that genuinely arrived over the air,
+        # which is what a throughput benchmark cares about, regardless of
+        # whether it later turns out to be a duplicate.
+        self.stats.record_rx()
+
+        key = (sender, pkt_id)
+        now = time.monotonic()
+
+        if self._is_duplicate_packet(key, now, pkt_id, sender):
+            return
+
+        full_packet = self._reassemble_fragment(key, frag_idx, payload, frag_total, now, sender, pkt_id)
+        if full_packet is None:
+            return
+
+        # Mark as completely reassembled inside sliding time window
+        with self._seen_lock:
+            if key not in self._seen_pkts and len(self._seen_pkts) >= self._SEEN_PKTS_MAX_KEYS:
+                # Evict the earliest-expiring (i.e. earliest-inserted, since
+                # all entries share the same TTL) half to make room.
+                oldest = sorted(self._seen_pkts, key=lambda k: self._seen_pkts[k])[
+                    : self._SEEN_PKTS_MAX_KEYS // 2
+                ]
+                for k in oldest:
+                    del self._seen_pkts[k]
+            self._seen_pkts[key] = now + self.DEDUPLICATION_TTL_S
+
+        if not full_packet:
+            return
+
+        self._learn_rns_token_binding(full_packet, sender)
+        self._deliver_reassembled_packet(full_packet, sender, rx_mode)
+
+    def _decode_tunnel_fragment(self, text: str, sender: str, rx_mode: str):
+        """Z85-decode a tunnel fragment and unpack/validate its header.
+        Returns (frag_idx, pkt_id, frag_total, payload), or None if the
+        fragment is unparsable, too short, or has an invalid header."""
         z85_text = text[len(self.MSG_PREFIX):].strip()
         try:
             raw = z85_decode(z85_text)
@@ -1833,7 +2696,7 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Dropped unparsable {rx_mode} fragment from '{sender}' "
                 f"({len(z85_text)} char(s)): {exc}."
             )
-            return
+            return None
 
         # Header unpacked big-endian matching structural change (1B index, 4B packet ID, 1B total fragments)
         if len(raw) < self.HEADER_SIZE:
@@ -1841,22 +2704,25 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Dropped {rx_mode} fragment from '{sender}' -- decoded to "
                 f"{len(raw)}b, shorter than the {self.HEADER_SIZE}b header."
             )
-            return
+            return None
 
         frag_idx, pkt_id, frag_total = struct.unpack(">BIB", raw[:6])
-        payload    = raw[self.HEADER_SIZE:]
+        payload = raw[self.HEADER_SIZE:]
 
         if frag_total == 0 or frag_idx >= frag_total:
             self._debug(
                 f"Dropped {rx_mode} fragment from '{sender}' -- invalid "
                 f"header (frag_idx={frag_idx}, frag_total={frag_total})."
             )
-            return
+            return None
 
-        key = (sender, pkt_id)
-        now = time.monotonic()
+        return frag_idx, pkt_id, frag_total, payload
 
-        # Sliding time-window deduplication check
+    def _is_duplicate_packet(self, key, now, pkt_id, sender) -> bool:
+        """Sliding time-window dedup check against _seen_pkts: True (after
+        logging) if this (sender, pkt_id) was already fully reassembled
+        within the last DEDUPLICATION_TTL_S; also prunes the entry once its
+        window has expired."""
         with self._seen_lock:
             if key in self._seen_pkts:
                 if now < self._seen_pkts[key]:
@@ -1866,13 +2732,36 @@ class MeshCore_Dynamic_Interface(Interface):
                         f"{self.DEDUPLICATION_TTL_S:.0f}s -- likely a "
                         f"retransmit pass or overheard repeat)."
                     )
-                    return
+                    return True
                 else:
                     del self._seen_pkts[key]
+        return False
 
-        # Fragment reassembly
+    def _reassemble_fragment(self, key, frag_idx, payload, frag_total, now, sender, pkt_id):
+        """Store one fragment's payload in the reassembly buffer for `key`,
+        returning the joined full packet once all frag_total fragments
+        have arrived, or None while still incomplete (or on a duplicate
+        fragment index / corrupt buffer)."""
         with self._asm_lock:
             if key not in self._assembly:
+                if len(self._assembly) >= self._ASSEMBLY_MAX_KEYS:
+                    # Evict the oldest half by start time rather than the
+                    # incoming fragment -- an attacker flooding fresh fake
+                    # keys should lose ground against genuine in-progress
+                    # transfers, not evict them.
+                    oldest = sorted(
+                        self._assembly_meta.keys(),
+                        key=lambda k: self._assembly_meta[k][1]
+                    )[: self._ASSEMBLY_MAX_KEYS // 2]
+                    for k in oldest:
+                        self._assembly.pop(k, None)
+                        self._assembly_meta.pop(k, None)
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Reassembly buffer at capacity ({self._ASSEMBLY_MAX_KEYS}) -- "
+                        f"evicted {len(oldest)} oldest incomplete transfer(s).",
+                        RNS.LOG_WARNING
+                    )
                 self._assembly[key]      = {}
                 self._assembly_meta[key] = (frag_total, now)
 
@@ -1882,12 +2771,12 @@ class MeshCore_Dynamic_Interface(Interface):
                     f"from '{sender}' ignored (already have it, "
                     f"{len(self._assembly[key])}/{frag_total} collected)."
                 )
-                return
+                return None
 
             self._assembly[key][frag_idx] = payload
 
             if len(self._assembly[key]) < self._assembly_meta[key][0]:
-                return  
+                return None
 
             try:
                 expected    = self._assembly_meta[key][0]
@@ -1896,102 +2785,108 @@ class MeshCore_Dynamic_Interface(Interface):
                 )
                 del self._assembly[key]
                 del self._assembly_meta[key]
+                return full_packet
             except Exception:
                 self._assembly.pop(key, None)
                 self._assembly_meta.pop(key, None)
-                return
+                return None
 
-        # Mark as completely reassembled inside sliding time window
-        with self._seen_lock:
-            self._seen_pkts[key] = now + self.DEDUPLICATION_TTL_S
-
-        if not full_packet:
+    def _learn_rns_token_binding(self, full_packet: bytes, sender: str) -> None:
+        """Extract the RNS token from a reassembled packet and, if the
+        sender is already a bound peer, link the token (and any
+        LINK_REQUEST link_id) to their MeshCore key; otherwise stash the
+        token for _handle_bind to backfill once the sender's bind
+        completes, and nudge that along with an opportunistic REQ."""
+        rns_token = self._extract_rns_token(full_packet)
+        if rns_token is None or not sender:
             return
 
-        rns_token = self._extract_rns_token(full_packet)
-        if rns_token is not None and sender:
-            with self._peer_lock:
-                mc_key = self._peer_table.get(sender)
-                if mc_key:
-                    if rns_token not in self._rns_to_mc_map:
-                        self._rns_to_mc_map[rns_token] = mc_key
-                        if len(self._rns_to_mc_map) > self._RNS_MAP_MAX:
-                            trim = list(self._rns_to_mc_map.keys())[
-                                : self._RNS_MAP_MAX // 2
-                            ]
-                            for t in trim:
-                                del self._rns_to_mc_map[t]
+        with self._peer_lock:
+            mc_key = self._peer_table.get(sender)
+            if mc_key:
+                if rns_token not in self._rns_to_mc_map:
+                    self._rns_to_mc_map[rns_token] = mc_key
+                    if len(self._rns_to_mc_map) > self._RNS_MAP_MAX:
+                        trim = list(self._rns_to_mc_map.keys())[
+                            : self._RNS_MAP_MAX // 2
+                        ]
+                        for t in trim:
+                            del self._rns_to_mc_map[t]
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Linked RNS token {rns_token.hex()[:8]} "
+                        f"-> '{sender}'",
+                        RNS.LOG_INFO
+                    )
+
+                if full_packet[0] & 0x03 == self._RNS_PTYPE_LINK_REQ:
+                    link_id = self._link_id_from_lr_packet(full_packet)
+                    if link_id is not None and link_id not in self._rns_to_mc_map:
+                        self._rns_to_mc_map[link_id] = mc_key
                         RNS.log(
                             f"MeshCore_Dynamic_Interface [{self.name}]: "
-                            f"Linked RNS token {rns_token.hex()[:8]} "
-                            f"-> '{sender}'",
+                            f"Pre-bound link_id {link_id.hex()[:8]} "
+                            f"-> '{sender}' from LINK_REQUEST",
                             RNS.LOG_INFO
                         )
 
-                    if full_packet[0] & 0x03 == self._RNS_PTYPE_LINK_REQ:
-                        link_id = self._link_id_from_lr_packet(full_packet)
-                        if link_id is not None and link_id not in self._rns_to_mc_map:
-                            self._rns_to_mc_map[link_id] = mc_key
-                            RNS.log(
-                                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                f"Pre-bound link_id {link_id.hex()[:8]} "
-                                f"-> '{sender}' from LINK_REQUEST",
-                                RNS.LOG_INFO
-                            )
+        if not mc_key:
+            # sender hasn't completed RNSBIND with us yet. Previously
+            # this token was just dropped here -- if RNSBIND never
+            # happened to complete afterwards (or completed too late),
+            # this destination stayed CHANNEL-only forever even after
+            # the peer became known, because nothing re-checked it.
+            # Stash it so _handle_bind() can backfill it the moment the
+            # bind completes, and nudge that along instead of waiting
+            # on the passive heartbeat/zero-peer REQ cycle.
+            with self._pending_tokens_lock:
+                bucket = self._pending_tokens.get(sender)
+                if bucket is None:
+                    if len(self._pending_tokens) < self._PENDING_TOKENS_MAX_SENDERS:
+                        bucket = set()
+                        self._pending_tokens[sender] = bucket
+                if (
+                    bucket is not None
+                    and len(bucket) < self._PENDING_TOKENS_MAX_PER_SENDER
+                ):
+                    bucket.add(rns_token)
+            asyncio.create_task(self._opportunistic_bind_req(sender))
 
-            if not mc_key:
-                # sender hasn't completed RNSBIND with us yet. Previously
-                # this token was just dropped here -- if RNSBIND never
-                # happened to complete afterwards (or completed too late),
-                # this destination stayed CHANNEL-only forever even after
-                # the peer became known, because nothing re-checked it.
-                # Stash it so _handle_bind() can backfill it the moment the
-                # bind completes, and nudge that along instead of waiting
-                # on the passive heartbeat/zero-peer REQ cycle.
-                with self._pending_tokens_lock:
-                    bucket = self._pending_tokens.get(sender)
-                    if bucket is None:
-                        if len(self._pending_tokens) < self._PENDING_TOKENS_MAX_SENDERS:
-                            bucket = set()
-                            self._pending_tokens[sender] = bucket
-                    if (
-                        bucket is not None
-                        and len(bucket) < self._PENDING_TOKENS_MAX_PER_SENDER
-                    ):
-                        bucket.add(rns_token)
-                asyncio.create_task(self._opportunistic_bind_req(sender))
-        if full_packet:
-            ptype = full_packet[0] & 0x03
-            ptype_str = {
-                0x00: "DATA",
-                0x01: "ANNOUNCE",
-                0x02: "LINK_REQ",
-                0x03: "PROOF"
-            }.get(ptype, "UNKNOWN")
-            
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"RX -> {rx_mode} from '{sender}'. Reassembled {len(full_packet)}b {ptype_str} packet.",
-                RNS.LOG_INFO
-            )
+    def _deliver_reassembled_packet(self, full_packet: bytes, sender: str, rx_mode: str) -> None:
+        """Log the reassembled packet, flag its destination as awaiting a
+        path-response announce if it's itself a path request, and hand it
+        up to processIncoming."""
+        ptype = full_packet[0] & 0x03
+        ptype_str = {
+            0x00: "DATA",
+            0x01: "ANNOUNCE",
+            0x02: "LINK_REQ",
+            0x03: "PROOF"
+        }.get(ptype, "UNKNOWN")
 
-            # An incoming DATA+PLAIN packet is a path request. If Transport
-            # owns this destination (or has a cached path to it), it will
-            # turn around and call processOutgoing() with a fresh ANNOUNCE
-            # for it almost immediately. Flag the destination so that
-            # announce isn't mistaken for a spontaneous re-announce and
-            # suppressed by the outgoing announce rate limiter below.
-            dest_type = (full_packet[0] >> 2) & 0x03
-            if (
-                ptype == self._RNS_PTYPE_DATA
-                and dest_type == self._RNS_DTYPE_PLAIN
-                and len(full_packet) >= 12
-            ):
-                dest_id = bytes(full_packet[2:12])
-                with self._path_response_pending_lock:
-                    self._path_response_pending[dest_id] = (
-                        time.monotonic() + self._path_response_bypass_s
-                    )
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"RX -> {rx_mode} from '{sender}'. Reassembled {len(full_packet)}b {ptype_str} packet.",
+            RNS.LOG_INFO
+        )
+
+        # An incoming DATA+PLAIN packet is a path request. If Transport
+        # owns this destination (or has a cached path to it), it will
+        # turn around and call processOutgoing() with a fresh ANNOUNCE
+        # for it almost immediately. Flag the destination so that
+        # announce isn't mistaken for a spontaneous re-announce and
+        # suppressed by the outgoing announce rate limiter below.
+        dest_type = (full_packet[0] >> 2) & 0x03
+        if (
+            ptype == self._RNS_PTYPE_DATA
+            and dest_type == self._RNS_DTYPE_PLAIN
+            and len(full_packet) >= 12
+        ):
+            dest_id = bytes(full_packet[2:12])
+            with self._path_response_pending_lock:
+                self._path_response_pending[dest_id] = (
+                    time.monotonic() + self._path_response_bypass_s
+                )
         try:
             self.processIncoming(full_packet)
         except Exception as exc:
@@ -2005,6 +2900,9 @@ class MeshCore_Dynamic_Interface(Interface):
     # -------------------------------------------------------------------------
 
     def _is_broadcast_packet(self, data: bytes) -> bool:
+        """True for ANNOUNCE and DATA+PLAIN (path request) packets -- the
+        two types that can only ever go out as unacknowledged CHANNEL
+        broadcasts, never DIRECT."""
         if len(data) < 1:
             return True
         flags     = data[0]
@@ -2017,6 +2915,9 @@ class MeshCore_Dynamic_Interface(Interface):
         return False
 
     def _extract_rns_token(self, data: bytes):
+        """Pull the destination hash out of a raw RNS packet's header, used
+        as the key into _rns_to_mc_map. Returns None if the packet is too
+        short to contain one."""
         if len(data) < 2:
             return None
         header_type = (data[0] & 0x40) >> 6
@@ -2033,6 +2934,10 @@ class MeshCore_Dynamic_Interface(Interface):
             return bytes(data[2:end])
 
     def _link_id_from_lr_packet(self, raw: bytes):
+        """Derive the ephemeral Link ID from a LINK_REQUEST packet, matching
+        RNS's own hashing so DIRECT routing keeps working for the life of
+        the Link (whose destination field becomes this Link ID post-
+        handshake, rather than the original destination hash)."""
         if len(raw) < 2:
             return None
         DST_LEN = self._RNS_DST_LEN
@@ -2047,101 +2952,35 @@ class MeshCore_Dynamic_Interface(Interface):
         return hashlib.sha256(hashable).digest()[:DST_LEN]
 
     def process_outgoing(self, data):
+        """RNS calls this snake_case alias; delegate to processOutgoing."""
         return self.processOutgoing(data)
 
     def processOutgoing(self, data):
+        """RNS-facing entry point for a packet leaving this interface:
+        applies announce/path-request rate limiting, picks DIRECT vs
+        CHANNEL routing, fragments/encodes the packet, enqueues each
+        fragment, and schedules any extra best-effort retransmits."""
         if not self.online:
             return
 
         hdr_byte  = data[0] if data else 0
-        ptype     = hdr_byte & 0x03         
-        dest_type = (hdr_byte >> 2) & 0x03  
-        perf_start = time.monotonic()
+        ptype     = hdr_byte & 0x03
+        dest_type = (hdr_byte >> 2) & 0x03
 
-        
-
-        # Per-destination outgoing announce rate limiter. Bypassed for
-        # announces that are answering a path request we recently saw come
-        # in for this same destination (see _path_response_pending) -- those
-        # are demand-driven responses, not spontaneous re-announces, and
-        # dropping them silently is what causes intermittent "path request
-        # timed out" failures on the requesting side when a routine
-        # self-announce happened to go out shortly beforehand.
-        if self._announce_rate_s > 0 and len(data) >= 12:
-            if ptype == self._RNS_PTYPE_ANNOUNCE:
-                dest_id = bytes(data[2:12])
-                now     = time.monotonic()
-
-                with self._path_response_pending_lock:
-                    expiry = self._path_response_pending.pop(dest_id, None)
-                answering_path_request = expiry is not None and now < expiry
-
-                if not answering_path_request:
-                    with self._announce_sent_lock:
-                        last = self._announce_sent_times.get(dest_id, 0)
-                        if now - last < self._announce_rate_s:
-                            RNS.log(
-                                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                f"Suppressing outgoing announce for "
-                                f"{dest_id.hex()[:8]} -- {now - last:.0f}s "
-                                f"since last (< {self._announce_rate_s:.0f}s limit).",
-                                RNS.LOG_INFO
-                            )
-                            return
-                else:
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"Announce for {dest_id.hex()[:8]} bypassing rate "
-                        f"limiter -- answering a recent path request.",
-                        RNS.LOG_INFO
-                    )
-
-                with self._announce_sent_lock:
-                    self._announce_sent_times[dest_id] = now
-
-        # Per-destination outgoing path request rate limiter, with a burst
-        # window that lets RNS's own natural retry cluster through before the
-        # long-run anti-spam cooldown kicks in. See path_req_burst_window
-        # comment in __init__ for rationale.
-        if self._path_req_rate_s > 0 and len(data) >= 12:
-            if ptype == self._RNS_PTYPE_DATA and dest_type == self._RNS_DTYPE_PLAIN:
-                dest_id = bytes(data[2:12])
-                now     = time.monotonic()
-                with self._path_req_sent_lock:
-                    entry = self._path_req_sent_times.get(dest_id)
-                    if entry is None:
-                        # First request for this destination: starts a new burst.
-                        self._path_req_sent_times[dest_id] = (now, now)
-                    else:
-                        first_ts, last_ts = entry
-                        if now - first_ts < self._path_req_burst_window_s:
-                            # Still inside the burst window -- let it through,
-                            # just refresh last_ts for cleanup purposes.
-                            self._path_req_sent_times[dest_id] = (first_ts, now)
-                        elif now - last_ts < self._path_req_rate_s:
-                            # Burst window elapsed and still within the
-                            # long-run cooldown -- suppress.
-                            RNS.log(
-                                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                f"Suppressing outgoing path request for "
-                                f"{dest_id.hex()[:8]} -- {now - last_ts:.0f}s "
-                                f"since last (burst window elapsed, "
-                                f"< {self._path_req_rate_s:.0f}s limit).",
-                                RNS.LOG_INFO
-                            )
-                            return
-                        else:
-                            # Cooldown expired -- this starts a fresh burst.
-                            self._path_req_sent_times[dest_id] = (now, now)
+        if self._rate_limit_announce(data, ptype):
+            return
+        if self._rate_limit_path_request(data, ptype, dest_type):
+            return
 
         with self._pkt_id_lock:
             pkt_id       = self._pkt_id
             self._pkt_id = (self._pkt_id + 1) & 0xFFFFFFFF  # 32-bit bound integer tracking
 
         handler   = _PacketHandler(data, pkt_id, self._auto_payload_size())
-        
+        self._register_pkt_send(pkt_id, len(handler.fragments))
+
         broadcast = self._is_broadcast_packet(data)
-        
+
         #Log Fragmentation Performance Metrics
         RNS.log(
             f"[PERF {pkt_id}] OUT "
@@ -2150,9 +2989,110 @@ class MeshCore_Dynamic_Interface(Interface):
             f"broadcast={broadcast}",
             RNS.LOG_INFO
         )
-        
-        
-        
+
+        route = self._resolve_outgoing_route(data, broadcast)
+        mode, target = route[0]
+        priority = (
+            self._PRIORITY_HANDSHAKE
+            if ptype in (self._RNS_PTYPE_LINK_REQ, self._RNS_PTYPE_PROOF)
+            else self._PRIORITY_NORMAL
+        )
+
+        self._enqueue_fragments(handler, mode, target, priority, pkt_id, broadcast)
+        self._schedule_extra_retransmits(handler, route, ptype, dest_type, broadcast, priority)
+
+        self.txb += len(data)
+        self.stats.record_tx_bytes(len(data))
+
+    def _rate_limit_announce(self, data: bytes, ptype: int) -> bool:
+        """Per-destination outgoing announce rate limiter. Bypassed for
+        announces answering a path request we recently saw come in for this
+        same destination (see _path_response_pending) -- those are demand-
+        driven responses, not spontaneous re-announces, and dropping them
+        silently is what causes intermittent "path request timed out"
+        failures on the requesting side when a routine self-announce
+        happened to go out shortly beforehand. Returns True if the announce
+        should be suppressed."""
+        if not (self._announce_rate_s > 0 and len(data) >= 12 and ptype == self._RNS_PTYPE_ANNOUNCE):
+            return False
+
+        dest_id = bytes(data[2:12])
+        now     = time.monotonic()
+
+        with self._path_response_pending_lock:
+            expiry = self._path_response_pending.pop(dest_id, None)
+        answering_path_request = expiry is not None and now < expiry
+
+        if not answering_path_request:
+            with self._announce_sent_lock:
+                last = self._announce_sent_times.get(dest_id, 0)
+                if now - last < self._announce_rate_s:
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Suppressing outgoing announce for "
+                        f"{dest_id.hex()[:8]} -- {now - last:.0f}s "
+                        f"since last (< {self._announce_rate_s:.0f}s limit).",
+                        RNS.LOG_INFO
+                    )
+                    return True
+        else:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Announce for {dest_id.hex()[:8]} bypassing rate "
+                f"limiter -- answering a recent path request.",
+                RNS.LOG_INFO
+            )
+
+        with self._announce_sent_lock:
+            self._announce_sent_times[dest_id] = now
+        return False
+
+    def _rate_limit_path_request(self, data: bytes, ptype: int, dest_type: int) -> bool:
+        """Per-destination outgoing path request rate limiter, with a burst
+        window that lets RNS's own natural retry cluster through before the
+        long-run anti-spam cooldown kicks in. See path_req_burst_window
+        comment in _configure_path_discovery_and_retry for rationale.
+        Returns True if the path request should be suppressed."""
+        if not (self._path_req_rate_s > 0 and len(data) >= 12
+                and ptype == self._RNS_PTYPE_DATA and dest_type == self._RNS_DTYPE_PLAIN):
+            return False
+
+        dest_id = bytes(data[2:12])
+        now     = time.monotonic()
+        with self._path_req_sent_lock:
+            entry = self._path_req_sent_times.get(dest_id)
+            if entry is None:
+                # First request for this destination: starts a new burst.
+                self._path_req_sent_times[dest_id] = (now, now)
+            else:
+                first_ts, last_ts = entry
+                if now - first_ts < self._path_req_burst_window_s:
+                    # Still inside the burst window -- let it through,
+                    # just refresh last_ts for cleanup purposes.
+                    self._path_req_sent_times[dest_id] = (first_ts, now)
+                elif now - last_ts < self._path_req_rate_s:
+                    # Burst window elapsed and still within the
+                    # long-run cooldown -- suppress.
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Suppressing outgoing path request for "
+                        f"{dest_id.hex()[:8]} -- {now - last_ts:.0f}s "
+                        f"since last (burst window elapsed, "
+                        f"< {self._path_req_rate_s:.0f}s limit).",
+                        RNS.LOG_INFO
+                    )
+                    return True
+                else:
+                    # Cooldown expired -- this starts a fresh burst.
+                    self._path_req_sent_times[dest_id] = (now, now)
+        return False
+
+    def _resolve_outgoing_route(self, data: bytes, broadcast: bool):
+        """Decide whether this packet should go DIRECT (bound peer with a
+        resolved MeshCore path) or CHANNEL (broadcast, no direct route, or
+        an unresolved path -- which also kicks off a rate-limited path-
+        discovery attempt). Returns a single-element [(mode, target)] route
+        list."""
         target_key = None
         channel_reason = ""
 
@@ -2177,7 +3117,7 @@ class MeshCore_Dynamic_Interface(Interface):
                         # In your routing selection logic:
                         if opl == -1:
                             channel_reason = f"Peer bound but no resolved MeshCore path yet (out_path_len=-1) for {target_key}"
-                            
+
                             now = time.monotonic()
                             last_req = self._path_req_timestamps.get(target_key, 0)
                             cooldown = self._path_discovery_cooldown_for(target_key)
@@ -2187,14 +3127,14 @@ class MeshCore_Dynamic_Interface(Interface):
                                     if contact is not None:
                                         RNS.log(f"requesting path discovery for peer key {target_key}", RNS.LOG_INFO)
                                         asyncio.run_coroutine_threadsafe(
-                                            self.discover_path(contact), 
+                                            self.discover_path(contact),
                                             self._loop
                                         )
                                     else:
                                         RNS.log(f"requesting path discovery for peer key {target_key} (no contact found)", RNS.LOG_INFO)
-                                    
+
                                     asyncio.run_coroutine_threadsafe(
-                                        self._mc.commands.send_advert(flood=True), 
+                                        self._mc.commands.send_advert(flood=True),
                                         self._loop
                                         )
                             else:
@@ -2203,9 +3143,8 @@ class MeshCore_Dynamic_Interface(Interface):
                                     f"-- backed off (retry in ~{cooldown - (now - last_req):.0f}s).",
                                     RNS.LOG_INFO
                                 )
-                            
+
                             target_key = None
-                            
 
         if channel_reason:
             RNS.log(
@@ -2213,40 +3152,31 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"Routing -> CHANNEL. Reason: {channel_reason}",
                 RNS.LOG_INFO
             )
-            route = [("channel", None)]
-        else:
-            assert target_key is not None
-            # Re-fetch fresh rather than trusting a `contact` variable that
-            # may have been set several branches up (or not at all, in the
-            # unlikely case self._mc was falsy above) -- this is a log line,
-            # not a routing decision, so it should reflect exactly what
-            # MeshCore's cache holds for this peer right now.
-            _log_contact = self._mc.get_contact_by_key_prefix(target_key) if self._mc else None
-            _path_desc = (
-                f"out_path_len={_log_contact.get('out_path_len')} "
-                f"out_path={_log_contact.get('out_path')}"
-                if _log_contact is not None else "no cached contact"
-            )
-            RNS.log(
-                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                f"Routing -> DIRECT via peer key {target_key[:12]}... [{_path_desc}]",
-                RNS.LOG_INFO
-            )
-            route = [("direct", target_key)]
-            
-        # route always holds exactly one (mode, target) pair -- unpack once
-        # rather than re-iterating a single-element list per fragment.
-        mode, target = route[0]
-        outq = self._direct_outqueue if mode == "direct" else self._channel_outqueue
+            return [("channel", None)]
 
-        # LINK_REQUEST and PROOF jump ahead of ordinary DATA/ANNOUNCE already
-        # waiting in the queue -- see _PRIORITY_HANDSHAKE for rationale.
-        priority = (
-            self._PRIORITY_HANDSHAKE
-            if ptype in (self._RNS_PTYPE_LINK_REQ, self._RNS_PTYPE_PROOF)
-            else self._PRIORITY_NORMAL
+        assert target_key is not None
+        # Re-fetch fresh rather than trusting a `contact` variable that
+        # may have been set several branches up (or not at all, in the
+        # unlikely case self._mc was falsy above) -- this is a log line,
+        # not a routing decision, so it should reflect exactly what
+        # MeshCore's cache holds for this peer right now.
+        _log_contact = self._mc.get_contact_by_key_prefix(target_key) if self._mc else None
+        _path_desc = (
+            f"out_path_len={_log_contact.get('out_path_len')} "
+            f"out_path={_log_contact.get('out_path')}"
+            if _log_contact is not None else "no cached contact"
         )
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Routing -> DIRECT via peer key {target_key[:12]}... [{_path_desc}]",
+            RNS.LOG_INFO
+        )
+        return [("direct", target_key)]
 
+    def _enqueue_fragments(self, handler, mode, target, priority, pkt_id, broadcast) -> None:
+        """Push every fragment of a packet onto the correct (direct/channel)
+        outgoing queue, blocking on backpressure if the queue is full."""
+        outq = self._direct_outqueue if mode == "direct" else self._channel_outqueue
         for frag_str in handler.fragments:
             try:
                 # Thread-safe blocking put handles backpressure cleanly
@@ -2271,18 +3201,22 @@ class MeshCore_Dynamic_Interface(Interface):
             except Exception:
                 pass
 
-        # Schedule extra passes for broadcast-only packet types. Path
-        # RESPONSES aren't a distinct packet type in this system -- they're
-        # just an ANNOUNCE that happened to be triggered by an inbound path
-        # request (see _path_response_pending above) -- so they're already
-        # covered by the announce_retransmit_extra branch below with no
-        # separate handling needed.
-        # ordinary_data_retransmit_extra only makes sense for non-broadcast
-        # packets that ended up on the unacknowledged CHANNEL path (e.g. no
-        # bound peer / no resolved route yet). A DIRECT send is already
-        # ACK'd by the firmware (see _async_outgoing_worker), so blindly
-        # retransmitting it too would just double-deliver a packet that's
-        # already confirmed received.
+    def _schedule_extra_retransmits(self, handler, route, ptype, dest_type, broadcast, priority) -> None:
+        """Kick off _delayed_retransmits for packet types that benefit from
+        unacknowledged best-effort duplication (announces, path requests,
+        and ordinary data that fell back to CHANNEL) -- a no-op for
+        anything already ACK'd via DIRECT.
+
+        Path RESPONSES aren't a distinct packet type in this system --
+        they're just an ANNOUNCE that happened to be triggered by an
+        inbound path request (see _path_response_pending) -- so they're
+        already covered by the announce_retransmit_extra branch below with
+        no separate handling needed. ordinary_data_retransmit_extra only
+        makes sense for non-broadcast packets that ended up on the
+        unacknowledged CHANNEL path (e.g. no bound peer / no resolved route
+        yet); a DIRECT send is already ACK'd by the firmware (see
+        _async_outgoing_worker), so blindly retransmitting it too would
+        just double-deliver a packet that's already confirmed received."""
         retransmit_extra = 0
         if broadcast:
             if ptype == self._RNS_PTYPE_ANNOUNCE:
@@ -2298,9 +3232,11 @@ class MeshCore_Dynamic_Interface(Interface):
                 self._loop
             )
 
-        self.txb += len(data)
-
     async def _delayed_retransmits(self, fragments, route, count, broadcast, priority):
+        """Re-queue every fragment of a packet `count` more times, each
+        after an independent random jitter delay, to opportunistically
+        improve delivery odds over an unreliable link without blocking the
+        original send."""
         # route always holds exactly one (mode, target) pair -- unpack once
         # rather than re-iterating a single-element list per fragment.
         mode, target = route[0]
@@ -2331,6 +3267,127 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"({len(fragments)} fragment(s), same pkt_id).",
                 RNS.LOG_INFO
             )
+
+    async def _send_direct_with_retry(self, target, frag_str) -> None:
+        """Attempt a DIRECT send+ACK cycle against `target` up to
+        direct_send_attempts times, with a fresh send (and fresh
+        expected_ack) each retry -- a lost ACK on the return trip doesn't
+        mean the forward frame was lost, so retrying the send itself is
+        cheaper and far less airtime-hungry than immediately escalating to
+        a broadcast CHANNEL resend. Mirrors send_msg_with_retry's
+        multi-attempt behavior in the official meshcore client. Returns
+        normally on success; raises the last attempt's exception if every
+        attempt failed."""
+        # Guaranteed non-None here: only called from _send_fragment, which
+        # the outgoing worker only invokes after checking both are set.
+        assert self._mc is not None and self._EventType is not None
+        max_direct_attempts = max(1, self.direct_send_attempts)
+        last_exc = RuntimeError("direct send failed")
+
+        for attempt in range(1, max_direct_attempts + 1):
+            try:
+                attempt_start = time.monotonic()
+                result = await self._mc.commands.send_msg(target, frag_str)
+                if result is None or result.type != self._EventType.MSG_SENT:
+                    reason = (
+                        result.payload.get("reason", "no path/unknown")
+                        if result is not None else "no response"
+                    )
+                    raise RuntimeError(f"direct send rejected: {reason}")
+
+                # MSG_SENT confirms the radio genuinely put this
+                # fragment on air (even though, per the comment
+                # below, it says nothing about delivery) -- count
+                # it here, including retries, since each is a
+                # real separate transmission.
+                self.stats.record_tx()
+
+                # CORRECTED UNDERSTANDING: MSG_SENT only confirms the
+                # local radio queued the frame for transmission -- it
+                # is NOT end-to-end delivery confirmation. The
+                # firmware hands back an "expected_ack" tag in the
+                # MSG_SENT payload; actual over-air delivery is
+                # confirmed later (if at all) by a separate ACK event
+                # carrying that same tag. Without waiting on it, a
+                # frame that never reaches the peer (out of range,
+                # collision, stale/broken path) is indistinguishable
+                # from one that was delivered.
+                exp_ack = result.payload.get("expected_ack")
+                if exp_ack is None:
+                    return
+
+                exp_ack_hex = (
+                    exp_ack.hex() if isinstance(exp_ack, (bytes, bytearray))
+                    else str(exp_ack)
+                )
+                suggested_ms = result.payload.get("suggested_timeout", 0) or 0
+                # NOTE: for a contact with out_path_len == -1 (no known
+                # route -- flood mode), the firmware's suggested_timeout
+                # can be very large, since it has to budget for a full
+                # flood-and-wait cycle. The DIRECT queue has its own
+                # worker task (separate from CHANNEL, see
+                # _async_outgoing_worker) -- an uncapped wait here can
+                # no longer stall channel broadcasts, but it would
+                # still stall every other queued DIRECT fragment
+                # (to this or any other peer) for however long the
+                # firmware suggests, which can be minutes. We
+                # deliberately cap it: our own CHANNEL fallback is
+                # cheap, so there's no reason to let one flood-mode
+                # contact block the rest of the direct queue for as
+                # long as the radio itself would wait.
+                raw_ack_timeout = max(
+                    self.direct_ack_timeout_s, (suggested_ms / 1000.0) * 1.2
+                )
+                ack_timeout = min(raw_ack_timeout, self.direct_ack_timeout_max_s)
+                if raw_ack_timeout > ack_timeout:
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Firmware suggested {suggested_ms}ms ACK timeout for "
+                        f"peer key {target[:12] if target else '?'}... "
+                        f"(likely flood/no-path) -- capping wait at "
+                        f"{ack_timeout:.1f}s instead of {raw_ack_timeout:.1f}s "
+                        f"to avoid blocking the outgoing queue.",
+                        RNS.LOG_INFO
+                    )
+                ack = await self._mc.dispatcher.wait_for_event(
+                    self._EventType.ACK,
+                    attribute_filters={"code": exp_ack_hex},
+                    timeout=ack_timeout,
+                )
+                if ack is None:
+                    raise RuntimeError(
+                        f"no delivery ACK within {ack_timeout:.1f}s "
+                        f"(expected_ack={exp_ack_hex}, "
+                        f"firmware suggested {suggested_ms}ms)"
+                    )
+
+                #Ack received -- log success and continue to next fragment
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Direct send to peer key {target[:12] if target else '?'}... "
+                    f"ACK received (expected_ack={exp_ack_hex}).",
+                    RNS.LOG_INFO
+                )
+                # MeshCore-level latency: the raw send-to-ACK
+                # round trip for THIS attempt specifically, not
+                # counting time spent on any earlier failed
+                # attempts for the same fragment.
+                self.stats.record_meshcore_latency(
+                    time.monotonic() - attempt_start, peer_key=target
+                )
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_direct_attempts:
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"DIRECT send attempt {attempt}/{max_direct_attempts} "
+                        f"to peer key {target[:12] if target else '?'}... "
+                        f"failed ({exc}) -- retrying.",
+                        RNS.LOG_INFO
+                    )
+
+        raise last_exc
 
     async def _async_outgoing_worker(self, outq):
         """
@@ -2368,270 +3425,231 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
-            # Age alone isn't a good enough reason to drop a fragment -- one
-            # that's simply had bad luck on an otherwise quiet queue will get
-            # sent in a moment regardless, and dropping it gains nothing.
-            # Only sacrifice it when there's an ACTUAL backlog behind it too
-            # (depth_behind, i.e. how many items are still waiting once this
-            # one is removed): that's the case where continuing to send it
-            # anyway is genuinely costing everything queued after it more
-            # time, and where the RNS-level request/Link that created it
-            # (RNS's own Link establishment timeout is typically a handful
-            # of seconds per hop -- see stale_fragment_max_age in __init__)
-            # has, in all likelihood, already given up. Broadcast packets
-            # are exempt regardless -- they have no single requester to give
-            # up, and a late announce/path-response is still useful
-            # network-wide.
-            if (
-                not broadcast
-                and self.stale_fragment_max_age_s > 0
-                and queue_wait > self.stale_fragment_max_age_s
-                and depth_behind >= self.stale_fragment_min_queue_depth
-            ):
-                RNS.log(
-                    f"MeshCore_Dynamic_Interface [{self.name}]: "
-                    f"Dropping stale {mode} fragment for pkt_id "
-                    f"{pkt_id if pkt_id is not None else 'unknown'} -- sat "
-                    f"{queue_wait:.1f}s in queue (> "
-                    f"{self.stale_fragment_max_age_s:.0f}s max age) with "
-                    f"{depth_behind} item(s) still backed up behind it "
-                    f"(>= {self.stale_fragment_min_queue_depth}); the "
-                    f"requester has very likely already given up.",
-                    RNS.LOG_INFO
-                )
+            if self._drop_stale_fragment_if_needed(mode, pkt_id, broadcast, queue_wait, depth_behind):
                 outq.task_done()
                 continue
 
             try:
-                if mode == "direct":
-                    # A lost delivery ACK on the return trip doesn't mean the
-                    # forward frame was lost -- retrying the DIRECT send a
-                    # couple of times is cheaper and far less airtime-hungry
-                    # than immediately escalating to a broadcast CHANNEL
-                    # resend. Mirrors send_msg_with_retry's multi-attempt
-                    # behavior in the official meshcore client, instead of
-                    # giving DIRECT exactly one shot before falling back.
-                    max_direct_attempts = max(1, self.direct_send_attempts)
-                    last_exc = RuntimeError("direct send failed")
-                    ack_received = False
-
-                    for attempt in range(1, max_direct_attempts + 1):
-                        try:
-                            result = await self._mc.commands.send_msg(target, frag_str)
-                            if result is None or result.type != self._EventType.MSG_SENT:
-                                reason = (
-                                    result.payload.get("reason", "no path/unknown")
-                                    if result is not None else "no response"
-                                )
-                                raise RuntimeError(f"direct send rejected: {reason}")
-
-                            # CORRECTED UNDERSTANDING: MSG_SENT only confirms the
-                            # local radio queued the frame for transmission -- it
-                            # is NOT end-to-end delivery confirmation. The
-                            # firmware hands back an "expected_ack" tag in the
-                            # MSG_SENT payload; actual over-air delivery is
-                            # confirmed later (if at all) by a separate ACK event
-                            # carrying that same tag. Without waiting on it, a
-                            # frame that never reaches the peer (out of range,
-                            # collision, stale/broken path) is indistinguishable
-                            # from one that was delivered.
-                            exp_ack = result.payload.get("expected_ack")
-                            if exp_ack is None:
-                                ack_received = True
-                                break
-
-                            exp_ack_hex = (
-                                exp_ack.hex() if isinstance(exp_ack, (bytes, bytearray))
-                                else str(exp_ack)
-                            )
-                            suggested_ms = result.payload.get("suggested_timeout", 0) or 0
-                            # NOTE: for a contact with out_path_len == -1 (no known
-                            # route -- flood mode), the firmware's suggested_timeout
-                            # can be very large, since it has to budget for a full
-                            # flood-and-wait cycle. The DIRECT queue has its own
-                            # worker task (separate from CHANNEL, see
-                            # _async_outgoing_worker) -- an uncapped wait here can
-                            # no longer stall channel broadcasts, but it would
-                            # still stall every other queued DIRECT fragment
-                            # (to this or any other peer) for however long the
-                            # firmware suggests, which can be minutes. We
-                            # deliberately cap it: our own CHANNEL fallback is
-                            # cheap, so there's no reason to let one flood-mode
-                            # contact block the rest of the direct queue for as
-                            # long as the radio itself would wait.
-                            raw_ack_timeout = max(
-                                self.direct_ack_timeout_s, (suggested_ms / 1000.0) * 1.2
-                            )
-                            ack_timeout = min(raw_ack_timeout, self.direct_ack_timeout_max_s)
-                            if raw_ack_timeout > ack_timeout:
-                                RNS.log(
-                                    f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                    f"Firmware suggested {suggested_ms}ms ACK timeout for "
-                                    f"peer key {target[:12] if target else '?'}... "
-                                    f"(likely flood/no-path) -- capping wait at "
-                                    f"{ack_timeout:.1f}s instead of {raw_ack_timeout:.1f}s "
-                                    f"to avoid blocking the outgoing queue.",
-                                    RNS.LOG_INFO
-                                )
-                            ack = await self._mc.dispatcher.wait_for_event(
-                                self._EventType.ACK,
-                                attribute_filters={"code": exp_ack_hex},
-                                timeout=ack_timeout,
-                            )
-                            if ack is None:
-                                raise RuntimeError(
-                                    f"no delivery ACK within {ack_timeout:.1f}s "
-                                    f"(expected_ack={exp_ack_hex}, "
-                                    f"firmware suggested {suggested_ms}ms)"
-                                )
-
-                            #Ack received -- log success and continue to next fragment
-                            RNS.log(
-                                f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                f"Direct send to peer key {target[:12] if target else '?'}... "
-                                f"ACK received (expected_ack={exp_ack_hex}).",
-                                RNS.LOG_INFO
-                            )
-                            ack_received = True
-                            break
-                        except Exception as exc:
-                            last_exc = exc
-                            if attempt < max_direct_attempts:
-                                RNS.log(
-                                    f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                    f"DIRECT send attempt {attempt}/{max_direct_attempts} "
-                                    f"to peer key {target[:12] if target else '?'}... "
-                                    f"failed ({exc}) -- retrying.",
-                                    RNS.LOG_INFO
-                                )
-
-                    if not ack_received:
-                        raise last_exc
-
-                    # A successful DIRECT delivery means whatever path is
-                    # currently cached for this peer is working -- clear any
-                    # accumulated failure count so a future blip doesn't
-                    # inherit credit toward resetting a path that just proved
-                    # itself fine.
-                    with self._path_req_lock:
-                        self._direct_path_failures.pop(target, None)
-                else:
-                    await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
+                await self._send_fragment(mode, target, frag_str, pkt_id)
             except Exception as exc:
-                if mode == "direct":
-                    # Diagnostic: pull the target's out_path status from the
-                    # meshcore library's local contact cache (self._mc.contacts).
-                    # This reads in-memory state populated by earlier
-                    # CONTACTS/PATH_UPDATE/ADVERTISEMENT events -- it does NOT
-                    # touch the serial port, so it's safe to call from here
-                    # without contending with rnsd's own use of the connection.
-                    path_info = "unknown (no cached contact)"
-                    try:
-                        contact = self._mc.get_contact_by_key_prefix(target) if target else None
-                        if contact:
-                            opl = contact.get("out_path_len", -1)
-                            path_info = (
-                                f"out_path_len={opl}"
-                                if opl != -1 else "out_path_len=-1 (no known route) - Requesting new path discovery"
-                            )
-                            if opl > 0:
-                                now = time.monotonic()
-                                last_req = self._path_req_timestamps.get(target, 0)
-                                cooldown = self._path_discovery_cooldown_for(target)
-                                if (now - last_req) > cooldown:
-                                    self._path_req_timestamps[target] = now
-                                    asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
-
-                            # Separate from discovery above: track repeated
-                            # failures against this peer's CURRENTLY CACHED
-                            # path specifically (0-hop or multi-hop -- any
-                            # opl != -1). Verified empirically on a real
-                            # link: a cached path can go stale (repeater
-                            # repositioned, shorter route now exists) while
-                            # remaining stuck in the contact table, and
-                            # continuing to retry a stale path fails far more
-                            # often than resetting it to flood mode and
-                            # letting the firmware find whatever route
-                            # currently works.
-                            if opl != -1 and self.direct_path_reset_threshold > 0:
-                                with self._path_req_lock:
-                                    fail_count = self._direct_path_failures.get(target, 0) + 1
-                                    self._direct_path_failures[target] = fail_count
-                                if fail_count >= self.direct_path_reset_threshold:
-                                    with self._path_req_lock:
-                                        self._direct_path_failures[target] = 0
-                                    RNS.log(
-                                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                                        f"Peer key {target[:12] if target else '?'}... has failed "
-                                        f"{fail_count} consecutive DIRECT send(s) on its cached "
-                                        f"path (out_path_len={opl}) -- resetting to flood mode "
-                                        f"instead of continuing to retry what looks like a stale "
-                                        f"route.",
-                                        RNS.LOG_WARNING
-                                    )
-                                    if self._loop is not None:
-                                        asyncio.run_coroutine_threadsafe(
-                                            self._mc.commands.reset_path(contact), self._loop
-                                        )
-                    except Exception:
-                        pass
-                    RNS.log(
-                        f"MeshCore_Dynamic_Interface [{self.name}]: "
-                        f"DIRECT send to peer key {target[:12] if target else '?'}... "
-                        f"failed after {max(1, self.direct_send_attempts)} attempt(s) "
-                        f"({exc}) [{path_info}] -- falling back to CHANNEL.",
-                        RNS.LOG_INFO
-                    )
-                    try:
-                        # Fallback to channel if targeted routing exceptions happen
-                        # mid-transit -- always goes to the channel queue regardless
-                        # of which queue this worker instance drains. broadcast is
-                        # always False here: only non-broadcast packets ever route
-                        # DIRECT in the first place (see _is_broadcast_packet).
-                        # priority carries over unchanged -- it's the same
-                        # original packet, just switching transport mode.
-                        self._channel_outqueue.put_nowait((
-                            priority,
-                            next(self._outqueue_seq),
-                            ("channel", None, frag_str, queued_at, pkt_id, broadcast),
-                        ))
-                    except queue.Full:
-                        RNS.log(
-                            f"MeshCore_Dynamic_Interface [{self.name}]: "
-                            f"Channel queue full ({self.OUTQUEUE_MAXSIZE}) -- "
-                            f"dropped fragment {pkt_id if pkt_id is not None else 'unknown'} "
-                            f"on DIRECT->CHANNEL fallback.",
-                            RNS.LOG_WARNING
-                        )
+                self._handle_send_failure(mode, target, frag_str, priority, queued_at, pkt_id, broadcast, exc)
                 outq.task_done()
                 continue
 
-            delay = (
-                self.direct_frag_delay_s
-                if mode == "direct"
-                else self.fragment_delay_s
-            )
-            # NOTE: with independent DIRECT/CHANNEL workers, rate_limit_bps is
-            # now enforced per-queue rather than as one combined interface-wide
-            # cap -- each stream paces itself to the configured bps rather than
-            # the two sharing a single budget.
-            if self.rate_limit_bps > 0:
-                bits  = (len(frag_str) * 3 // 4) * 8
-                delay = max(delay, bits / self.rate_limit_bps)
-
-            await asyncio.sleep(delay)
+            await self._pace_after_send(mode, frag_str)
             outq.task_done()
+
+    def _drop_stale_fragment_if_needed(self, mode, pkt_id, broadcast, queue_wait, depth_behind) -> bool:
+        """Age alone isn't a good enough reason to drop a fragment -- one
+        that's simply had bad luck on an otherwise quiet queue will get
+        sent in a moment regardless, and dropping it gains nothing. Only
+        sacrifice it when there's an ACTUAL backlog behind it too
+        (depth_behind, i.e. how many items are still waiting once this one
+        is removed): that's the case where continuing to send it anyway is
+        genuinely costing everything queued after it more time, and where
+        the RNS-level request/Link that created it (RNS's own Link
+        establishment timeout is typically a handful of seconds per hop --
+        see stale_fragment_max_age in _configure_stale_fragment_dropping)
+        has, in all likelihood, already given up. Broadcast packets are
+        exempt regardless -- they have no single requester to give up, and
+        a late announce/path-response is still useful network-wide.
+        Returns True (after logging) if the fragment should be dropped."""
+        if not (
+            not broadcast
+            and self.stale_fragment_max_age_s > 0
+            and queue_wait > self.stale_fragment_max_age_s
+            and depth_behind >= self.stale_fragment_min_queue_depth
+        ):
+            return False
+
+        RNS.log(
+            f"MeshCore_Dynamic_Interface [{self.name}]: "
+            f"Dropping stale {mode} fragment for pkt_id "
+            f"{pkt_id if pkt_id is not None else 'unknown'} -- sat "
+            f"{queue_wait:.1f}s in queue (> "
+            f"{self.stale_fragment_max_age_s:.0f}s max age) with "
+            f"{depth_behind} item(s) still backed up behind it "
+            f"(>= {self.stale_fragment_min_queue_depth}); the "
+            f"requester has very likely already given up.",
+            RNS.LOG_INFO
+        )
+        return True
+
+    async def _send_fragment(self, mode, target, frag_str, pkt_id) -> None:
+        """Send one fragment via DIRECT (with ACK-gated retry) or CHANNEL
+        broadcast, recording stats and marking the packet fragment done on
+        success. Raises on total failure -- caller handles the CHANNEL
+        fallback/logging."""
+        # Guaranteed non-None here: only called from the outgoing worker
+        # after it has already checked self._mc is set.
+        assert self._mc is not None
+        if mode == "direct":
+            # A lost delivery ACK on the return trip doesn't mean the
+            # forward frame was lost -- retrying the DIRECT send a
+            # couple of times is cheaper and far less airtime-hungry
+            # than immediately escalating to a broadcast CHANNEL
+            # resend. Mirrors send_msg_with_retry's multi-attempt
+            # behavior in the official meshcore client, instead of
+            # giving DIRECT exactly one shot before falling back.
+            # Raises on total failure -- caught by the caller, which
+            # handles the CHANNEL fallback.
+            await self._send_direct_with_retry(target, frag_str)
+
+            self.stats.record_direct_result(success=True, peer_key=target)
+            self._mark_pkt_fragment_done(pkt_id)
+
+            # A successful DIRECT delivery means whatever path is
+            # currently cached for this peer is working -- clear any
+            # accumulated failure count so a future blip doesn't
+            # inherit credit toward resetting a path that just proved
+            # itself fine.
+            with self._path_req_lock:
+                self._direct_path_failures.pop(target, None)
+        else:
+            await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
+            self.stats.record_tx()
+            self.stats.record_flood_tx()
+            self._mark_pkt_fragment_done(pkt_id)
+
+    def _handle_send_failure(self, mode, target, frag_str, priority, queued_at, pkt_id, broadcast, exc) -> None:
+        """Handle a _send_fragment failure: for DIRECT, log path
+        diagnostics, maybe trigger path discovery or a reset-to-flood on
+        repeated failure, and fall back to enqueuing the fragment on
+        CHANNEL; for CHANNEL there's no fallback, so the fragment is simply
+        marked done (lost)."""
+        if mode == "direct":
+            # Guaranteed non-None here: only called from the outgoing
+            # worker after it has already checked both are set.
+            assert self._mc is not None and self._loop is not None
+            self.stats.record_direct_result(success=False, peer_key=target)
+            # Diagnostic: pull the target's out_path status from the
+            # meshcore library's local contact cache (self._mc.contacts).
+            # This reads in-memory state populated by earlier
+            # CONTACTS/PATH_UPDATE/ADVERTISEMENT events -- it does NOT
+            # touch the serial port, so it's safe to call from here
+            # without contending with rnsd's own use of the connection.
+            path_info = "unknown (no cached contact)"
+            try:
+                contact = self._mc.get_contact_by_key_prefix(target) if target else None
+                if contact:
+                    opl = contact.get("out_path_len", -1)
+                    path_info = (
+                        f"out_path_len={opl}"
+                        if opl != -1 else "out_path_len=-1 (no known route) - Requesting new path discovery"
+                    )
+                    if opl > 0:
+                        now = time.monotonic()
+                        last_req = self._path_req_timestamps.get(target, 0)
+                        cooldown = self._path_discovery_cooldown_for(target)
+                        if (now - last_req) > cooldown:
+                            self._path_req_timestamps[target] = now
+                            asyncio.run_coroutine_threadsafe(self.discover_path(contact), self._loop) # Request path
+
+                    # Separate from discovery above: track repeated
+                    # failures against this peer's CURRENTLY CACHED
+                    # path specifically (0-hop or multi-hop -- any
+                    # opl != -1). Verified empirically on a real
+                    # link: a cached path can go stale (repeater
+                    # repositioned, shorter route now exists) while
+                    # remaining stuck in the contact table, and
+                    # continuing to retry a stale path fails far more
+                    # often than resetting it to flood mode and
+                    # letting the firmware find whatever route
+                    # currently works.
+                    if opl != -1 and self.direct_path_reset_threshold > 0:
+                        with self._path_req_lock:
+                            fail_count = self._direct_path_failures.get(target, 0) + 1
+                            self._direct_path_failures[target] = fail_count
+                        if fail_count >= self.direct_path_reset_threshold:
+                            with self._path_req_lock:
+                                self._direct_path_failures[target] = 0
+                            RNS.log(
+                                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                                f"Peer key {target[:12] if target else '?'}... has failed "
+                                f"{fail_count} consecutive DIRECT send(s) on its cached "
+                                f"path (out_path_len={opl}) -- resetting to flood mode "
+                                f"instead of continuing to retry what looks like a stale "
+                                f"route.",
+                                RNS.LOG_WARNING
+                            )
+                            if self._loop is not None:
+                                asyncio.run_coroutine_threadsafe(
+                                    self._mc.commands.reset_path(contact), self._loop
+                                )
+            except Exception:
+                pass
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"DIRECT send to peer key {target[:12] if target else '?'}... "
+                f"failed after {max(1, self.direct_send_attempts)} attempt(s) "
+                f"({exc}) [{path_info}] -- falling back to CHANNEL.",
+                RNS.LOG_INFO
+            )
+            try:
+                # Fallback to channel if targeted routing exceptions happen
+                # mid-transit -- always goes to the channel queue regardless
+                # of which queue this worker instance drains. broadcast is
+                # always False here: only non-broadcast packets ever route
+                # DIRECT in the first place (see _is_broadcast_packet).
+                # priority carries over unchanged -- it's the same
+                # original packet, just switching transport mode.
+                self._channel_outqueue.put_nowait((
+                    priority,
+                    next(self._outqueue_seq),
+                    ("channel", None, frag_str, queued_at, pkt_id, broadcast),
+                ))
+            except queue.Full:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"Channel queue full ({self.OUTQUEUE_MAXSIZE}) -- "
+                    f"dropped fragment {pkt_id if pkt_id is not None else 'unknown'} "
+                    f"on DIRECT->CHANNEL fallback.",
+                    RNS.LOG_WARNING
+                )
+                # Truly lost -- nothing further will be attempted for
+                # this fragment, so it's "finally accounted for" now
+                # (as opposed to a successful re-enqueue just above,
+                # which isn't done until the CHANNEL attempt itself
+                # resolves).
+                self._mark_pkt_fragment_done(pkt_id)
+        else:
+            # CHANNEL send raised -- there's no retry/fallback for
+            # CHANNEL itself, so this fragment is also finally done
+            # (lost) right here.
+            self._mark_pkt_fragment_done(pkt_id)
+
+    async def _pace_after_send(self, mode, frag_str) -> None:
+        """Sleep the configured per-mode pacing delay, extended if needed
+        so throughput stays within rate_limit_bps.
+
+        NOTE: with independent DIRECT/CHANNEL workers, rate_limit_bps is
+        enforced per-queue rather than as one combined interface-wide cap --
+        each stream paces itself to the configured bps rather than the two
+        sharing a single budget."""
+        delay = (
+            self.direct_frag_delay_s
+            if mode == "direct"
+            else self.fragment_delay_s
+        )
+        if self.rate_limit_bps > 0:
+            bits  = (len(frag_str) * 3 // 4) * 8
+            delay = max(delay, bits / self.rate_limit_bps)
+
+        await asyncio.sleep(delay)
 
     # -------------------------------------------------------------------------
     # Inbound delivery
     # -------------------------------------------------------------------------
 
     def processIncoming(self, data: bytes):
+        """Hand a fully-reassembled RNS packet up to RNS's Transport layer."""
         if self.online and not self.detached:
             self.rxb += len(data)
+            self.stats.record_rx_bytes(len(data))
             self.owner.inbound(data, self)
 
     def __str__(self):
+        """Human-readable identifier RNS uses in its own logs."""
         return f"MeshCore_Dynamic_Interface[{self.name}]"
 
 # ------------------------------------------------------------------------
