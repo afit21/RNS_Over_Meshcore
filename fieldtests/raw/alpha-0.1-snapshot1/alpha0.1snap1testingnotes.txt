@@ -1,0 +1,161 @@
+From start of laptop logs until [Insert end time]:
+The Heltecv3's are sitting in different rooms
+Just sending meshchat message between PCs. No other rns traffic is happening.
+Started timing on my phone how long it takes for short message to show as delivered on meshchat:
+These tests started around 14:17. Another thing worth noting is that meshchat reported multiple attempts for all.
+- 10 seconds
+- 22 seconds
+- 15 seconds
+- 34 seconds
+at 14:20 started sending a 320x320 image over meshchat. it finished sending around 14:24:50
+
+Started a ping to my pc at 14:29 and left it running while I traveled to a different location around town.
+Keep in mind that during this time the antenna may have been in less than ideal locations, but I did my best to keep the antenna in the best place possible in my car while riving
+For alot of the start the ping was running from in my house, so if no change was detected for a long period from the start, thats why
+
+Around 14:55 I stopped somewhere and pushed an announce
+
+Just a note while testing - it seems to have detected a repeater at 14:58 after I stopped, but its taking a while to find a new path to my transfer node
+15:01 stopping mesh chat ping. Here are the ping results:
+seq=1 duration=23818.035ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=2 duration=19409.892ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=3 duration=13700.424ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=4 duration=5641.651ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=5 duration=4968.337ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=6 duration=5595.021ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=7 duration=5086.404ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=8 duration=13804.004ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=9 duration=6676.451ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=10 duration=7459.891ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=11 error=Ping failed. Timed out after 25 seconds.
+seq=12 duration=20380.745ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=13 duration=6314.748ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=14 duration=5542.706ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=15 duration=5529.204ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=16 duration=13414.394ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=17 duration=12880.831ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=18 duration=15899.662ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=19 duration=4797.691ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=20 duration=6117.027ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=21 duration=6117.067ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=22 duration=5728.821ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=23 duration=5424.259ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=24 duration=13341.496ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=25 duration=6205.647ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=26 duration=13652.082ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=27 duration=5066.918ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=28 duration=5579.027ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=29 duration=5119.963ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=30 duration=5180.664ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=31 duration=5266.416ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=32 duration=6656.307ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=33 duration=10307.937ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=34 duration=9662.334ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=35 duration=9225.945ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=36 duration=6225.400ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=37 duration=5714.102ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=38 duration=7760.313ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=39 error=Ping failed. Timed out after 25 seconds.
+seq=40 duration=19276.007ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=41 duration=5777.965ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=42 duration=6001.683ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=43 error=Ping failed. Timed out after 25 seconds.
+seq=44 duration=6400.233ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=45 duration=6425.546ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=46 duration=12908.037ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=47 duration=13846.056ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=48 duration=6097.257ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=49 duration=5997.862ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=50 error=Ping failed. Timed out after 25 seconds.
+seq=51 duration=23742.712ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=52 error=Ping failed. Timed out after 25 seconds.
+seq=53 error=Ping failed. Timed out after 25 seconds.
+seq=54 duration=17106.916ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=55 duration=12608.782ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=56 error=Ping failed. Timed out after 25 seconds.
+seq=57 error=Ping failed. Timed out after 25 seconds.
+seq=58 duration=16200.592ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=59 duration=18820.653ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=60 error=Ping failed. Timed out after 25 seconds.
+seq=61 duration=9640.224ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=62 duration=21484.045ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=63 error=Ping failed. Timed out after 25 seconds.
+seq=64 duration=19599.458ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=65 duration=23239.970ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=66 error=Ping failed. Timed out after 25 seconds.
+seq=67 error=Ping failed. Timed out after 25 seconds.
+seq=68 duration=8158.879ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=69 duration=5538.708ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=70 duration=11167.604ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=71 duration=5421.072ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=72 duration=5115.079ms hops_there=3 hops_back=3 via=LocalInterface[rns/default]
+seq=73 error=Ping failed. Timed out after 25 seconds.
+seq=74 error=Ping failed. Timed out after 25 seconds.
+seq=75 error=Ping failed. Timed out after 25 seconds.
+seq=76 error=Ping failed. Timed out after 25 seconds.
+seq=77 error=Ping failed. Timed out after 25 seconds.
+seq=78 error=Ping failed. Timed out after 25 seconds.
+seq=79 error=Ping failed. Timed out after 25 seconds.
+seq=80 error=Ping failed. Timed out after 25 seconds.
+seq=81 error=Ping failed. Timed out after 25 seconds.
+seq=82 error=Ping failed. Timed out after 25 seconds.
+seq=83 error=Ping failed. Timed out after 25 seconds.
+seq=84 error=Ping failed. Timed out after 25 seconds.
+seq=85 error=Ping failed. Timed out after 25 seconds.
+seq=86 error=Ping failed. Timed out after 25 seconds.
+seq=87 error=Ping failed. Timed out after 25 seconds.
+seq=88 error=Ping failed. Timed out after 25 seconds.
+seq=89 error=Ping failed. Timed out after 25 seconds.
+seq=90 error=Ping failed. Timed out after 25 seconds.
+seq=91 error=Ping failed. Timed out after 25 seconds.
+seq=92 error=Ping failed. Timed out after 25 seconds.
+seq=93 error=Ping failed. Timed out after 25 seconds.
+seq=94 error=Ping failed. Timed out after 25 seconds.
+seq=95 error=Ping failed. Timed out after 25 seconds.
+seq=96 error=Ping failed. Timed out after 25 seconds.
+seq=97 error=Ping failed. Timed out after 25 seconds.
+seq=98 error=Ping failed. Timed out after 25 seconds.
+seq=99 error=Ping failed. Timed out after 25 seconds.
+seq=100 error=Ping failed. Timed out after 25 seconds.
+seq=101 error=Ping failed. Timed out after 25 seconds.
+seq=102 error=Ping failed. Timed out after 25 seconds.
+seq=103 error=Ping failed. Timed out after 25 seconds.
+seq=104 error=Ping failed. Timed out after 25 seconds.
+seq=105 error=Ping failed. Timed out after 25 seconds.
+seq=106 error=Ping failed. Timed out after 25 seconds.
+seq=107 error=Ping failed. Timed out after 25 seconds.
+seq=108 error=Ping failed. Timed out after 25 seconds.
+seq=109 error=Ping failed. Timed out after 25 seconds.
+seq=110 error=Ping failed. Timed out after 25 seconds.
+
+Restarting RNSD to see if the interface reconnects
+The logs show this but RNSBIND REQ didnt get a response
+stopping RNSD again so that I can confirm in the meshcore app that repeaters are reachable
+MeshCore showed shakey connection to only one repeater. Restarting rnsd and moving to a better location. I don't think the interface is at fault here.
+started travelling t a new location
+
+at new location:
+Starting ping again
+15:17 - restarting rnsd and stopping ping
+Sent an announce at 15:17
+
+Starting rnsd again 15:32
+stopping to check what meshcore reckons
+meshcore reckons 3 hops message sent through path to desktop radio
+trying rnsd again
+No luck connecting over 3 hops when Meshcore didn't have much issue
+Why would this work in the official meshcore client but not the rns interface?
+
+Traveling again to move within range of closest meshcore releater to house
+trying at 15:42 to reach via closest repeater (not 100% sure if in range)
+No luck.
+Trying a bit closer
+
+15:50 I should well and truely be within range. Confirming with Meshcore
+
+15:52 trying one more time
+
+Looks like I have a connection again. wierd cause I didnt move or anything
+
+LXMF Pings now working
+

@@ -186,29 +186,29 @@ announce_rate_penalty = 7200   # extended quiet period after a violation
 
 ### Payload size
 
-MeshCore firmware silently truncates channel messages beyond a hardware-dependent character limit (commonly ~128 chars). The firmware also prepends the sender's node name when relaying channel messages, so the usable character budget for the encoded fragment is:
+MeshCore firmware silently truncates channel/direct messages beyond a per-message character limit — confirmed against the reference companion-radio firmware source (`MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160` chars). This is configurable via `firmware_text_limit` (default `160`) in case a specific firmware build or BLE stack genuinely needs a lower value. The firmware also prepends the sender's node name when relaying channel messages, so the usable character budget for the encoded fragment is:
 
 ```
 budget = firmware_limit - len(node_name) - 2        # ": " separator
 ```
 
-Encoded message length for a given payload size:
+Encoded message length for a given payload size (Z85: 1 pad-count char + 5 chars per 4 raw bytes, raw bytes rounded up to a multiple of 4 first):
 
 ```
-msg_len = ceil((payload_size + HEADER_SIZE) * 4/3) + len("RNS:")
+msg_len = 1 + 5*ceil((payload_size + HEADER_SIZE) / 4) + len("RNS:")
 ```
 
 With the default 6-byte header and `payload_size = 64`:
 
 ```
-msg_len = ceil(70 * 4/3) + 4 = 98 chars   →  safe for node names up to ~28 characters at a 128-char firmware limit
+msg_len = 1 + 5*ceil(70/4) + 4 = 95 chars   →  safe for node names up to ~58 characters at the default 160-char firmware limit
 ```
 
-To size `payload_size` for your own node name length:
+To size `payload_size` for your own node name length (a 4-character safety margin, `margin` below, is also subtracted — see `_auto_payload_size` — to cover firmware variation and the firmware's own additional 2-char shrink on a message's 4th+ send attempt):
 
 ```
 budget      = firmware_limit - len(node_name) - 2
-max_payload = floor((budget - 4) * 3/4) - HEADER_SIZE
+max_payload = floor((budget - 5) / 5) * 4 - HEADER_SIZE - margin
 ```
 
 ## How it works
@@ -230,7 +230,9 @@ Discovery is demand-driven rather than push/periodic, to minimize channel airtim
 3. Every node overhearing *any* `RNSBIND` response also records the responder, so a single discovery round passively populates every peer table on the channel.
 4. Once peers are known, a quiet `RNSBIND` heartbeat goes out every `BIND_HEARTBEAT_S` (default: 1 hour) — no response is solicited.
 
-The capability suffix (`R` = router, `E` = edge) tells peers at discovery time whether a node has upstream connectivity worth routing transit traffic through. It's recorded and logged but doesn't gate per-packet routing decisions — the interface's live route map is built from observed packet flow, and a path that has demonstrably worked (including through an edge node to reach a downstream client) is used regardless of the advertised capability.
+The capability suffix (`R` = router, `E` = edge) tells peers at discovery time whether a node has upstream connectivity worth routing transit traffic through. It's recorded and logged but doesn't gate per-packet routing decisions — the interface's live route map is built from observed packet flow, and a path that has demonstrably worked (including through an edge node to reach a downstream client) is used regardless of the advertised capability. Capability is only ever set from an actual `RNSBIND`/`RNSBIND_REQ` message — a bare MeshCore contact-table update carries no such information at all, and is never treated as one.
+
+Confirmed peer bindings (name ↔ MeshCore pubkey) are also cached to a small local file and restored on the next restart, so a plain `rnsd` restart doesn't have to repeat this whole exchange for a peer the MeshCore device itself still remembers — each restored entry is re-validated against the device's own live contact table before being trusted, so a stale cache entry (the peer's device was reset or re-paired while this process was down) can't misdirect traffic.
 
 ### RNS header parsing
 
@@ -245,6 +247,8 @@ A MeshCore `MSG_SENT` result only confirms the local radio queued the frame — 
 MeshCore's dedicated path-discovery command tells *the requesting client* a discovered path, but — by firmware design — it does not write that path into the device's own persistent contact table the way an ordinary message exchange does. Left alone, this means a path the interface believes it "discovered" can still show as unresolved to the official MeshCore app on its next connection. The interface now explicitly persists a successfully-discovered path back to the device itself, closing that gap.
 
 Separately, a path that *is* persisted can still go stale over time — a repeater repositions, or a shorter route opens up — while remaining stuck in the contact table. Continuing to retry a stale path measured far worse in testing than simply resetting it: the interface tracks consecutive direct-send failures against a peer's cached path, and once `direct_path_reset_threshold` is reached, resets that peer to flood mode so the next attempt can find whatever route currently works instead of retrying a route that's already proven dead.
+
+Resetting is irreversible, though — it discards the path both locally and on the MeshCore device's own persistent contact record, and recovery afterward depends entirely on flood-mode discovery, which is structurally less reliable over multiple hops than routed/direct forwarding (every intermediate repeater has to independently volunteer a rebroadcast, deprioritized further at each hop, versus one specific node relaying at top priority). So before resetting, the interface also checks the last-polled RSSI: if conditions still look reasonable, it's `direct_path_reset_patience_multiplier`× more patient than the failure count alone would suggest, on the theory that a path failing despite decent RF is more likely worth one more retry than an immediate reset. If RSSI is already poor (at/below `direct_path_reset_rssi_floor`) or not yet available, it resets at the original threshold unchanged.
 
 ### Outgoing queue behavior
 
@@ -266,6 +270,7 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `channel_name` | `RNSTunnel` | MeshCore channel name. Leave unset to use the shared default channel. |
 | `channel_secret` | *(shared default)* | MeshCore channel encryption key (32 hex chars). Sharing the default isn't an RNS security concern — see [Configuration](#configuration) — but set your own for a private channel. |
 | `payload_size` | `64` | Fragment payload size in bytes; see [Payload size](#payload-size) |
+| `firmware_text_limit` | `160` | MeshCore firmware's per-message character ceiling, used to auto-size `payload_size`; lower it only if your specific firmware/BLE combination needs it — see [Payload size](#payload-size) |
 | `fragment_delay` | `1.0` | Seconds between channel-mode fragments |
 | `direct_frag_delay` | `0.5` | Seconds between direct-message fragments |
 | `fragment_timeout` | `300` | Reassembly window for incomplete multi-fragment packets |
@@ -277,6 +282,8 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `path_discovery_max_cooldown` | `900.0` | Ceiling on the path-discovery backoff, regardless of consecutive failures |
 | `path_discovery_backoff_factor` | `2.0` | Multiplier applied to the cooldown per additional failure round |
 | `direct_path_reset_threshold` | `2` | Consecutive fully-exhausted direct-send failures against a peer's *cached* path before resetting it to flood mode (`0` disables) |
+| `direct_path_reset_rssi_floor` | `-105.0` | If the last-polled RSSI is at/below this, reset at `direct_path_reset_threshold` unchanged (conditions look genuinely poor); above it, be more patient — see next row |
+| `direct_path_reset_patience_multiplier` | `3.0` | When RSSI looks reasonable, wait this many times `direct_path_reset_threshold` before resetting a cached path — resetting is irreversible and forces recovery through flood-mode discovery, so it's worth one more retry first when conditions don't look dead |
 | `stale_fragment_max_age` | `30.0` | Seconds a fragment may sit in the outgoing queue before it's eligible to be dropped (`0` disables) |
 | `stale_fragment_min_queue_depth` | `10` | Fragments must also be backed up at least this many deep before dropping kicks in — age alone is never enough |
 | `contact_refresh_interval` | `30.0` | Seconds between periodic re-fetches of MeshCore's contact list, so cached path info doesn't go stale between events (local query only, no mesh airtime cost) |

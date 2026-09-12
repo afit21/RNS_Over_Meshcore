@@ -5,6 +5,116 @@ project it was forked from (preserved at
 [`referenceprojects/MeshCore_Dynamic_Interface_original_repo.py`](referenceprojects/MeshCore_Dynamic_Interface_original_repo.py))
 are documented here.
 
+## [alpha-0.1-snapshot2] - 2026-09-12
+
+This release is a direct response to the
+[`alpha-0.1-snapshot1`](fieldtests/reports/alpha-0.1-snapshot1.md) field test
+report, plus a batch of RNS-core-integration and observability improvements
+that came out of a broader design review. Not yet field-tested itself --
+this is the build intended for the next round of field testing
+(`fieldtests/raw/alpha-0.1-snapshot2`).
+
+### Fixed
+
+- **Peer capability mislabeling** (edge nodes repeatedly relabeled "router"):
+  root-caused directly from the snapshot1 field test logs, which showed a
+  peer configured `can_route=no` for its entire session getting bound as
+  `[edge]` immediately on RNSBIND, then relabeled `[router]` by the next
+  periodic contact refresh (every 30s), and repeating that flip indefinitely.
+  Cause: `_bind_meshcore_contact` read `contact.get("can_route", True)` --
+  but a MeshCore contact record has no such key at all (verified against the
+  library's contact parser: only `public_key`/`out_path_len`/`adv_name`/etc),
+  so this silently defaulted to `True` on every single contact-table event.
+  Capability can now only ever be set from an actual RNSBIND/RNSBIND_REQ
+  message; contact-table events (`_bind_meshcore_contact`) no longer touch a
+  peer's recorded capability at all. Low runtime impact today (capability
+  isn't read by any routing decision yet), but it was corrupting state a
+  future capability-aware feature would depend on, and misleading every log
+  line in the meantime.
+- **`firmware_text_limit`** (was hardcoded to `128` in `_auto_payload_size`):
+  verified directly against the MeshCore firmware source
+  (`MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160`, `src/helpers/BaseChatMesh.h` /
+  `src/MeshCore.h`) that the real per-message character ceiling is `160`, not
+  `128` -- fragments were sized ~25-30% smaller than necessary. Now a
+  configurable setting (`firmware_text_limit`, default `160`) rather than a
+  hardcoded guess, in case a specific firmware build or BLE stack genuinely
+  needs a lower value. The safety margin was also bumped from 2 to 4
+  characters, to cover the firmware's own additional 2-character shrink on a
+  DIRECT message's 4th+ send attempt (`attempt > 3` in `composeMsgPacket`).
+- Outgoing announce/path-request rate limiters keyed on only the first 10 of
+  the 16-byte RNS destination hash (`data[2:12]`), inconsistent with
+  `_RNS_DST_LEN`/`_extract_rns_token` used everywhere else in the file.
+  Corrected to the full 16 bytes (with matching length guards) in
+  `_rate_limit_announce`, `_rate_limit_path_request`, and the
+  `_path_response_pending` producer in `_deliver_reassembled_packet` (all
+  three must agree, since the rate limiter looks up a key that the deliver
+  path writes).
+
+### Added
+
+**Reliability, motivated by the snapshot1 field test**
+- Peer-binding persistence (`_save_peer_cache` / `_load_peer_cache`):
+  confirmed RNS-peer name<->MeshCore-pubkey bindings are now cached to a
+  small local JSON file (under RNS's own storage directory) and restored on
+  the next startup, but only for entries the MeshCore device's own live
+  contact table still corroborates. Previously every `rnsd` restart
+  discarded this mapping from memory and had to re-broadcast a fresh
+  RNSBIND_REQ and sit through its backoff window before any traffic could
+  flow again, even when the MeshCore device already had a working cached
+  path -- directly observed in the field test's 9 `rnsd` restarts inside one
+  49-minute window, each re-flooding the shared channel for no benefit.
+- `direct_path_reset_rssi_floor` / `direct_path_reset_patience_multiplier`:
+  before resetting a DIRECT peer's cached path to flood mode,
+  `_handle_send_failure` now checks the last-polled RSSI. Resetting is
+  irreversible -- it discards the path both locally and on the MeshCore
+  device's own persistent contact record -- and forces recovery through
+  flood-mode discovery specifically, which the firmware's own relay
+  scheduler confirms is structurally less reliable over multiple hops than
+  routed/DIRECT forwarding (randomized, increasingly-deprioritized
+  rebroadcast at every hop, vs. a single top-priority designated relay per
+  hop). The field test's outage began with a reset fired after only 2
+  failures at a still-moderate RSSI/SNR reading, after which recovery
+  depended entirely on flood discovery for ~65 minutes. Now, if RSSI still
+  looks reasonable, the interface is `direct_path_reset_patience_multiplier`x
+  (default 3) more patient before giving up on a path than failure count
+  alone would suggest; it falls back to the original (fast) threshold when
+  RSSI is poor or unavailable, preserving the behavior already validated for
+  a genuinely stale path (repeater physically moved).
+
+**RNS-core integration**
+- SNR/RSSI reporting (`reports_phy_stats` / `r_stat_rssi` / `r_stat_snr`):
+  the SNR (and, when available, RSSI) already arriving in MeshCore's own
+  channel/direct-message events was being read off the payload and
+  discarded -- it's now reported to RNS core for `rnstatus`/logging.
+  Confirmed against RNS core (`Transport.py`) that this is display-only
+  telemetry with no routing/retry/timeout logic behind it, and that it
+  reflects last-hop link quality only, not end-to-end/whole-path quality.
+- `shared_medium = True`: matches every other broadcast/half-duplex RNS
+  interface (`SerialInterface`, `RNodeInterface`, `KISSInterface`, etc.) in
+  correctly describing this interface's LoRa channel as shared airtime.
+  Confirmed no RNS-core consumer currently reads this flag, so this is a
+  correctness/self-description fix, not a behavior change.
+
+**Observability**
+- `get_stats_core()` added to the existing local (no mesh airtime) radio/
+  packet stats poll, surfacing the MeshCore device's own outgoing TX queue
+  depth (`tx_queue_len`) and battery voltage (`battery_mv`) -- a direct
+  "is the local mesh side backed up" signal that wasn't being collected
+  before.
+- `_SessionStats.snapshot()` now also reports `routing_health` (per-target
+  consecutive path-discovery and DIRECT-path failure counts -- already
+  tracked internally for the adaptive-backoff/reset-to-flood logic, but
+  never previously surfaced outside it -- plus current DIRECT/CHANNEL
+  outgoing queue depths) and `outgoing_packet_type_counts` (DATA/ANNOUNCE/
+  LINK_REQ/PROOF mix). Together these are the concrete signals a future
+  self-tuning controller (see the module docstring's TODO list) would need
+  to distinguish RNS-side demand from local mesh congestion.
+
+### Internal / code quality
+
+- Centralized the RNS packet-type-name mapping (`_PTYPE_NAMES`) instead of
+  duplicating an inline dict in two places.
+
 ## [alpha-0.1.1] - 2026-09-12
 
 This release is a substantial rework of the forked interface, focused on
