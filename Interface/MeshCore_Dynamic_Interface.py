@@ -1380,7 +1380,7 @@ class MeshCore_Dynamic_Interface(Interface):
         docstring's PAYLOAD SIZE section for the derivation. No-op (returns
         the configured payload_size unchanged) until the node name is known."""
         if self._own_node_name:
-            firmware_limit = self.firmware_text_limit
+            firmware_limit = 120 # TODO: Verify
             # Safety margin for firmware variations, and for the reference
             # firmware's own behavior of shrinking its text-length ceiling
             # by 2 more characters once a DIRECT message reaches its 4th+
