@@ -2594,6 +2594,19 @@ class MeshCore_Dynamic_Interface(Interface):
             res = await self._mc.commands.send_path_discovery_sync(
                 contact, timeout
             )
+            # The library waits on the PATH_RESPONSE event type with no peer
+            # filter, so never write a route into this contact unless the
+            # response names it.
+            if res is not None:
+                pubkey_pre = res.payload.get("pubkey_pre") or ""
+                if pubkey_pre and not key.startswith(pubkey_pre):
+                    RNS.log(
+                        f"MeshCore_Dynamic_Interface [{self.name}]: "
+                        f"Ignoring path-discovery response for {pubkey_pre}... "
+                        f"while waiting on {key[:12]}...",
+                        RNS.LOG_WARNING
+                    )
+                    res = None
 
             # A non-None result here means the firmware's isValidPathLen()
             # check passed on both path directions -- see MyMesh.cpp's
@@ -4257,8 +4270,8 @@ class MeshCore_Dynamic_Interface(Interface):
         success. Raises on total failure -- caller handles the CHANNEL
         fallback/logging."""
         # Guaranteed non-None here: only called from the outgoing worker
-        # after it has already checked self._mc is set.
-        assert self._mc is not None
+        # after it has already checked self._mc and self._EventType are set.
+        assert self._mc is not None and self._EventType is not None
         if mode == "direct":
             # A lost delivery ACK on the return trip doesn't mean the
             # forward frame was lost -- retrying the DIRECT send a
@@ -4282,7 +4295,13 @@ class MeshCore_Dynamic_Interface(Interface):
             with self._path_req_lock:
                 self._direct_path_failures.pop(target, None)
         else:
-            await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
+            result = await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
+            if result is None or result.type == self._EventType.ERROR:
+                reason = (
+                    result.payload.get("reason", "unknown")
+                    if result is not None else "no response"
+                )
+                raise RuntimeError(f"channel send rejected: {reason}")
             self.stats.record_tx()
             self.stats.record_flood_tx()
             self._mark_pkt_fragment_done(pkt_id)
@@ -4537,9 +4556,19 @@ class MeshCore_Dynamic_Interface(Interface):
                 # resolves).
                 self._mark_pkt_fragment_done(pkt_id)
         else:
-            # CHANNEL send raised -- there's no retry/fallback for
-            # CHANNEL itself, so this fragment is also finally done
-            # (lost) right here.
+            # There's no retry/fallback for CHANNEL itself, so this
+            # fragment is finally done (lost) right here -- but log it,
+            # otherwise a rejected/timed-out send (bad channel_idx, the
+            # device's own send queue full, or no reply at all) is
+            # completely invisible: nothing else in this path tells the
+            # difference between that and a genuine successful broadcast.
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"CHANNEL send failed ({exc}) -- dropped fragment "
+                f"{pkt_id if pkt_id is not None else 'unknown'} "
+                f"(no retry/fallback for CHANNEL).",
+                RNS.LOG_WARNING
+            )
             self._mark_pkt_fragment_done(pkt_id)
 
     async def _pace_after_send(self, mode, frag_str) -> None:
