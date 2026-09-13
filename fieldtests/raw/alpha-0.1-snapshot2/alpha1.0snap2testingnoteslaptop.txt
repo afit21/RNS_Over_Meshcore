@@ -1,0 +1,644 @@
+rnsd
+[2026-09-13 10:57:14] [Warning]  AutoInterface[Default Interface] could not autoconfigure. This interface currently provides no connectivity.
+[2026-09-13 10:57:16] [Error]    Initial connection for TCPInterface[Home interface/202.171.189.142:4242] could not be established: [Errno 101] Network is unreachable
+[2026-09-13 10:57:16] [Error]    Leaving unconnected and retrying connection in 5 seconds.
+[2026-09-13 10:57:16] [Notice]   Loading external interface "MeshCore_Dynamic_Interface.py" from "/home/afi/.reticulum/interfaces"
+INFO:meshcore:Serial Connection started
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Connected to MeshCore device (serial port=/dev/ttyUSB0 baudrate=115200).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Node identity: 'a' key=343377c464a79a48... [router]
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: No radio override configured -- using the node's currently stored radio settings.
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Channel configured: idx=35 name='RNSTunnel'.
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Initial contact fetch OK (7 contact(s) known).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'b' -> 7bd024b5d082747e... [capability unknown]
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'afipc' -> 7bd024b5d082747e... [capability unknown]
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Restored 2 peer binding(s) from a previous session (still confirmed present in the MeshCore device's own contact table).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: telemetry_mode_base set to ALLOW_FLAGS -- base telemetry (and so path discovery) will be answered only for peers granted the permission bit via a confirmed RNSBIND (see _grant_telemetry_permission).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Contact-update events bound: NEW_CONTACT, CONTACTS, CONTACTS_FULL, PATH_UPDATE, ADVERTISEMENT.
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT messaging ENABLED (receive event=CONTACT_MSG_RECV).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Direct and channel outgoing worker tasks started (independent queues, maxsize=512 each).
+[2026-09-13 10:57:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Interface ready -- transport=serial can_route=True allow_direct=True direct_api=True payload_size=64 peer_ttl=86400s auto_reconnect=True(3 attempts) debug_logs=True.
+[2026-09-13 10:57:16] [Notice]   Started rnsd version 1.4.2
+[2026-09-13 10:57:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 1/3, cap=R)
+[2026-09-13 10:57:40] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'afipc' -> 7bd024b5d082747e... [router]
+[2026-09-13 10:57:40] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Peer 'afipc' -> 7bd024b5d082747e... [router]
+[2026-09-13 10:57:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Auto-adjusting payload_size from 64 to 78 due to node name length.
+[2026-09-13 10:57:55] [Info]     [PERF 0] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:57:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:57:55] [Info]     [PERF 0] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:57:55] [Info]     [PERF 0] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:57:56] [Info]     [PERF 1] OUT size=192 ptype=1 broadcast=True
+[2026-09-13 10:57:56] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:57:56] [Info]     [PERF 1] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:57:56] [Info]     [PERF 1] QUEUE(channel) priority=1 depth=2
+[2026-09-13 10:57:56] [Info]     [PERF 1] QUEUE(channel) priority=1 depth=3
+[2026-09-13 10:57:56] [Info]     [PERF 1] DEQUEUE(channel) priority=1 queue_wait=0.088s depth=2
+[2026-09-13 10:57:57] [Info]     [PERF 1] DEQUEUE(channel) priority=1 queue_wait=1.111s depth=1
+[2026-09-13 10:57:58] [Info]     [PERF 1] DEQUEUE(channel) priority=1 queue_wait=2.135s depth=0
+[2026-09-13 10:58:01] [Info]     [PERF 2] OUT size=230 ptype=1 broadcast=True
+[2026-09-13 10:58:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:01] [Info]     [PERF 2] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:01] [Info]     [PERF 2] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:01] [Info]     [PERF 2] QUEUE(channel) priority=1 depth=2
+[2026-09-13 10:58:01] [Info]     [PERF 3] OUT size=192 ptype=1 broadcast=True
+[2026-09-13 10:58:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:01] [Info]     [PERF 3] QUEUE(channel) priority=1 depth=3
+[2026-09-13 10:58:01] [Info]     [PERF 3] QUEUE(channel) priority=1 depth=4
+[2026-09-13 10:58:01] [Info]     [PERF 3] QUEUE(channel) priority=1 depth=5
+[2026-09-13 10:58:01] [Info]     [PERF 2] DEQUEUE(channel) priority=1 queue_wait=0.001s depth=5
+[2026-09-13 10:58:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=0 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:02] [Info]     [PERF 2] DEQUEUE(channel) priority=1 queue_wait=1.025s depth=4
+[2026-09-13 10:58:02] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=1 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:03] [Info]     [PERF 2] DEQUEUE(channel) priority=1 queue_wait=2.048s depth=3
+[2026-09-13 10:58:04] [Info]     [PERF 3] DEQUEUE(channel) priority=1 queue_wait=3.070s depth=2
+[2026-09-13 10:58:05] [Info]     [PERF 3] DEQUEUE(channel) priority=1 queue_wait=4.093s depth=1
+[2026-09-13 10:58:06] [Info]     [PERF 3] DEQUEUE(channel) priority=1 queue_wait=5.117s depth=0
+[2026-09-13 10:58:07] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=2 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:10] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 4 flood packet(s) on the channel in the 6s after sending pkt_id=3 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=60s -- TX: 665B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 0 frag/s -- flood sends (last 60s): 10
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=4): avg=2342ms min=17ms max=5131ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=0, afipc=0 -- local mesh utilization: not yet available
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=1, ANNOUNCE=3
+[2026-09-13 10:58:16] [Info]     [PERF 4] OUT size=202 ptype=1 broadcast=True
+[2026-09-13 10:58:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:16] [Info]     [PERF 4] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:16] [Info]     [PERF 4] QUEUE(channel) priority=1 depth=2
+[2026-09-13 10:58:16] [Info]     [PERF 4] QUEUE(channel) priority=1 depth=3
+[2026-09-13 10:58:16] [Info]     [PERF 4] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=2
+[2026-09-13 10:58:17] [Info]     [PERF 4] DEQUEUE(channel) priority=1 queue_wait=1.024s depth=1
+[2026-09-13 10:58:18] [Info]     [PERF 4] DEQUEUE(channel) priority=1 queue_wait=2.047s depth=0
+[2026-09-13 10:58:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 2/3, cap=R)
+[2026-09-13 10:58:21] [Info]     [PERF 5] OUT size=202 ptype=1 broadcast=True
+[2026-09-13 10:58:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:21] [Info]     [PERF 5] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:21] [Info]     [PERF 5] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:21] [Info]     [PERF 5] QUEUE(channel) priority=1 depth=2
+[2026-09-13 10:58:21] [Info]     [PERF 5] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=2
+[2026-09-13 10:58:22] [Info]     [PERF 5] DEQUEUE(channel) priority=1 queue_wait=1.025s depth=1
+[2026-09-13 10:58:22] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=4 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:23] [Info]     [PERF 5] DEQUEUE(channel) priority=1 queue_wait=2.052s depth=0
+[2026-09-13 10:58:27] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=5 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:27] [Info]     [PERF 6] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:58:27] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:27] [Info]     [PERF 6] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:27] [Info]     [PERF 6] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:58:33] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=6 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:37] [Info]     [PERF 7] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:58:37] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:37] [Info]     [PERF 7] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:37] [Info]     [PERF 7] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:58:43] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=7 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Path for 76c1e7176aa426ac... changed via EventType.CONTACTS: None -> out_path_len=-1 out_path=.
+[2026-09-13 10:58:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'Broken Hill' -> 76c1e7176aa426ac... [capability unknown]
+[2026-09-13 10:58:51] [Info]     [PERF 8] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:58:51] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:51] [Info]     [PERF 8] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:51] [Info]     [PERF 8] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:58:55] [Info]     [PERF 9] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:58:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:55] [Info]     [PERF 9] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:55] [Info]     [PERF 9] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:58:57] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=8 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:58:59] [Info]     [PERF 10] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:58:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:58:59] [Info]     [PERF 10] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:58:59] [Info]     [PERF 10] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=9 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:03] [Info]     [PERF 11] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:03] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:03] [Info]     [PERF 11] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:03] [Info]     [PERF 11] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:05] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=10 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:07] [Info]     [PERF 12] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:07] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:07] [Info]     [PERF 12] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:07] [Info]     [PERF 12] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:09] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 4 flood packet(s) on the channel in the 6s after sending pkt_id=11 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=12 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Path for 7bd024b5d082747e... changed via EventType.CONTACTS: None -> out_path_len=3 out_path=764fd6.
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=120s -- TX: 1426B total, 41bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 13
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=13): avg=1048ms min=17ms max=5131ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=3, afipc=3, Broken Hill=-1 -- local mesh utilization: noise_floor=-115dBm last_rssi=-86dBm last_snr=12.5dB rx_channel_util=16.7% (ALL traffic on this channel, not just ours) recv=30 sent=28 recv_errors=2 tx_queue_len=0 battery_mv=3947
+[2026-09-13 10:59:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=8, ANNOUNCE=5
+[2026-09-13 10:59:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 3/3, cap=R)
+[2026-09-13 10:59:23] [Info]     [PERF 13] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:23] [Info]     [PERF 13] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:23] [Info]     [PERF 13] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=13 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:31] [Info]     [PERF 14] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:31] [Info]     [PERF 14] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:31] [Info]     [PERF 14] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:37] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=14 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:39] [Info]     [PERF 15] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:39] [Info]     [PERF 15] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:39] [Info]     [PERF 15] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=15 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 10:59:47] [Info]     [PERF 16] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 10:59:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 10:59:47] [Info]     [PERF 16] QUEUE(channel) priority=1 depth=1
+[2026-09-13 10:59:47] [Info]     [PERF 16] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 10:59:53] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=16 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:00:06] [Info]     [PERF 17] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:00:06] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:00:06] [Info]     [PERF 17] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:00:06] [Info]     [PERF 17] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:00:12] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=17 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:00:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=180s -- TX: 1681B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 5
+[2026-09-13 11:00:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:00:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=18): avg=761ms min=17ms max=5131ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:00:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=3, afipc=3, Broken Hill=-1 -- local mesh utilization: noise_floor=-115dBm last_rssi=-119dBm last_snr=-4.0dB rx_channel_util=13.3% (ALL traffic on this channel, not just ours) recv=49 sent=38 recv_errors=5 tx_queue_len=0 battery_mv=4122
+[2026-09-13 11:00:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=13, ANNOUNCE=5
+[2026-09-13 11:00:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Linked RNS token 8713640f -> 'afipc'
+[2026-09-13 11:00:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Pre-bound link_id c59da306 -> 'afipc' from LINK_REQUEST
+[2026-09-13 11:00:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: RX -> DIRECT from 'afipc'. Reassembled 83b LINK_REQ packet.
+[2026-09-13 11:00:17] [Info]     [PERF 18] OUT size=118 ptype=3 broadcast=False
+[2026-09-13 11:00:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> DIRECT via peer key 7bd024b5d082... [out_path_len=3 out_path=764fd6]
+[2026-09-13 11:00:17] [Info]     [PERF 18] QUEUE(direct) priority=0 depth=1
+[2026-09-13 11:00:17] [Info]     [PERF 18] QUEUE(direct) priority=0 depth=2
+[2026-09-13 11:00:17] [Info]     [PERF 18] DEQUEUE(direct) priority=0 queue_wait=0.000s depth=1
+[2026-09-13 11:00:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Sent RNSBIND heartbeat [cap=R] (next in 3600s).
+[2026-09-13 11:00:35] [Info]     [PERF 19] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:00:35] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:00:35] [Info]     [PERF 19] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:00:35] [Info]     [PERF 19] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:00:40] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT send attempt 1/3 to peer key 7bd024b5d082... failed (no delivery ACK within 23.3s (expected_ack=fc943978, firmware suggested 19380ms)) -- retrying.
+[2026-09-13 11:00:41] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=19 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:00:45] [Info]     [PERF 20] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:00:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:00:45] [Info]     [PERF 20] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:00:45] [Info]     [PERF 20] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:00:51] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=20 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:00:59] [Info]     [PERF 21] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:00:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:00:59] [Info]     [PERF 21] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:00:59] [Info]     [PERF 21] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:03] [Info]     [PERF 22] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:03] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:03] [Info]     [PERF 22] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:03] [Info]     [PERF 22] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:03] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT send attempt 2/3 to peer key 7bd024b5d082... failed (no delivery ACK within 23.3s (expected_ack=bade5c05, firmware suggested 19380ms)) -- retrying.
+[2026-09-13 11:01:03] [Warning]  MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Peer key 7bd024b5d082... has failed 2 consecutive DIRECT send attempt(s), each waiting the firmware's full suggested ACK time, on its cached path (out_path_len=3, last_rssi=-119dBm) -- resetting to flood mode instead of continuing to retry what looks like a stale route.
+[2026-09-13 11:01:03] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Firmware suggested 12420ms ACK timeout for peer key 7bd024b5d082... (flood/no-path send) -- capping wait at 10.0s instead of 14.9s to avoid blocking the outgoing queue.
+[2026-09-13 11:01:05] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=21 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:07] [Info]     [PERF 23] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:07] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:07] [Info]     [PERF 23] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:07] [Info]     [PERF 23] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:09] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 4 flood packet(s) on the channel in the 6s after sending pkt_id=22 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:11] [Info]     [PERF 24] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:11] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:11] [Info]     [PERF 24] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:11] [Info]     [PERF 24] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=23 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT send to peer key 7bd024b5d082... failed after 3 attempt(s) (no delivery ACK within 10.0s (expected_ack=ca2cf4bf, firmware suggested 12420ms)) [out_path_len=-1 (no known route) - Requesting new path discovery] -- falling back to CHANNEL.
+[2026-09-13 11:01:13] [Info]     [PERF 18] DEQUEUE(direct) priority=0 queue_wait=56.598s depth=0
+[2026-09-13 11:01:13] [Info]     [PERF 18] DEQUEUE(channel) priority=0 queue_wait=56.598s depth=0
+[2026-09-13 11:01:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Firmware suggested 9012ms ACK timeout for peer key 7bd024b5d082... (flood/no-path send) -- capping wait at 10.0s instead of 10.8s to avoid blocking the outgoing queue.
+[2026-09-13 11:01:15] [Info]     [PERF 25] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:15] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:15] [Info]     [PERF 25] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:15] [Info]     [PERF 25] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=240s -- TX: 2156B total, 122bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 8
+[2026-09-13 11:01:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 1 total, 1 failed (100.0%) -- per-link failure rate: 7bd024b5d082...=100% (1/1)
+[2026-09-13 11:01:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=553ms min=17ms max=5131ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:01:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=-1, afipc=-1, Broken Hill=-1 -- local mesh utilization: noise_floor=-117dBm last_rssi=-84dBm last_snr=11.25dB rx_channel_util=16.7% (ALL traffic on this channel, not just ours) recv=70 sent=53 recv_errors=7 tx_queue_len=0 battery_mv=4017
+[2026-09-13 11:01:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: 7bd024b5d082...=1 -- outgoing packet-type mix: DATA=20, ANNOUNCE=5, PROOF=1
+[2026-09-13 11:01:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=24 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:19] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=18 (2 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=25 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:23] [Info]     [PERF 26] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:23] [Info]     [PERF 26] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:23] [Info]     [PERF 26] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT send attempt 1/3 to peer key 7bd024b5d082... failed (no delivery ACK within 10.0s (expected_ack=79a08e9d, firmware suggested 9012ms)) -- retrying.
+[2026-09-13 11:01:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Firmware suggested 9012ms ACK timeout for peer key 7bd024b5d082... (flood/no-path send) -- capping wait at 10.0s instead of 10.8s to avoid blocking the outgoing queue.
+[2026-09-13 11:01:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Direct send to peer key 7bd024b5d082... ACK received (expected_ack=e2476c87).
+[2026-09-13 11:01:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=26 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Path for 7bd024b5d082747e... changed via EventType.CONTACTS: (3, '764fd6') -> out_path_len=1 out_path=76.
+[2026-09-13 11:01:31] [Info]     [PERF 27] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:31] [Info]     [PERF 27] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:31] [Info]     [PERF 27] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:37] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=27 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:39] [Info]     [PERF 28] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:39] [Info]     [PERF 28] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:39] [Info]     [PERF 28] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=28 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:01:47] [Info]     [PERF 29] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:01:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:01:47] [Info]     [PERF 29] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:01:47] [Info]     [PERF 29] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:01:53] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=29 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:13] [Info]     [PERF 30] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:13] [Info]     [PERF 30] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:13] [Info]     [PERF 30] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=300s -- TX: 2411B total, 41bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 5
+[2026-09-13 11:02:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:02:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=31): avg=2777ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:02:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-116dBm last_rssi=-87dBm last_snr=11.25dB rx_channel_util=10.0% (ALL traffic on this channel, not just ours) recv=81 sent=60 recv_errors=10 tx_queue_len=0 battery_mv=4034
+[2026-09-13 11:02:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25, ANNOUNCE=5, PROOF=1
+[2026-09-13 11:02:19] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=30 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:23] [Info]     [PERF 31] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:23] [Info]     [PERF 31] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:23] [Info]     [PERF 31] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=31 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:35] [Info]     [PERF 32] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:35] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:35] [Info]     [PERF 32] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:35] [Info]     [PERF 32] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:39] [Info]     [PERF 33] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:39] [Info]     [PERF 33] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:39] [Info]     [PERF 33] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:41] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=32 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:43] [Info]     [PERF 34] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:43] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:43] [Info]     [PERF 34] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:43] [Info]     [PERF 34] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=33 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:47] [Info]     [PERF 35] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:47] [Info]     [PERF 35] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:47] [Info]     [PERF 35] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:49] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=34 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:51] [Info]     [PERF 36] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:02:51] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:02:51] [Info]     [PERF 36] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:02:51] [Info]     [PERF 36] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:02:53] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=35 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:02:57] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=36 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:03:11] [Info]     [PERF 37] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:03:11] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:03:11] [Info]     [PERF 37] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:03:11] [Info]     [PERF 37] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:03:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=360s -- TX: 2768B total, 41bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 7
+[2026-09-13 11:03:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:03:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=38): avg=2268ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:03:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-115dBm last_rssi=-84dBm last_snr=12.25dB rx_channel_util=8.3% (ALL traffic on this channel, not just ours) recv=91 sent=67 recv_errors=10 tx_queue_len=0 battery_mv=3947
+[2026-09-13 11:03:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=32, ANNOUNCE=5, PROOF=1
+[2026-09-13 11:03:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=37 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:03:19] [Info]     [PERF 38] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:03:19] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:03:19] [Info]     [PERF 38] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:03:19] [Info]     [PERF 38] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:03:25] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=38 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:03:27] [Info]     [PERF 39] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:03:27] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:03:27] [Info]     [PERF 39] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:03:27] [Info]     [PERF 39] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:03:33] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=39 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:03:35] [Info]     [PERF 40] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:03:35] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:03:35] [Info]     [PERF 40] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:03:35] [Info]     [PERF 40] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:03:41] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=40 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:03:46] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 6 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:04:14] [Info]     [PERF 41] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:14] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:14] [Info]     [PERF 41] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:14] [Info]     [PERF 41] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 3 from 'afipc' -- only 1/2 fragment(s) arrived within 300s.
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 9 from 'afipc' -- only 3/4 fragment(s) arrived within 300s.
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 12 from 'afipc' -- only 1/2 fragment(s) arrived within 300s.
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 11 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=420s -- TX: 2972B total, 41bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 4
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=42): avg=2054ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-116dBm last_rssi=-85dBm last_snr=11.75dB rx_channel_util=6.7% (ALL traffic on this channel, not just ours) recv=97 sent=71 recv_errors=10 tx_queue_len=0 battery_mv=4052
+[2026-09-13 11:04:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=36, ANNOUNCE=5, PROOF=1
+[2026-09-13 11:04:20] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=41 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:04:24] [Info]     [PERF 42] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:24] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:24] [Info]     [PERF 42] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:24] [Info]     [PERF 42] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:30] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=42 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:04:39] [Info]     [PERF 43] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:39] [Info]     [PERF 43] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:39] [Info]     [PERF 43] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:43] [Info]     [PERF 44] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:43] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:43] [Info]     [PERF 44] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:43] [Info]     [PERF 44] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=43 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:04:46] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 14 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:04:47] [Info]     [PERF 45] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:47] [Info]     [PERF 45] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:47] [Info]     [PERF 45] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:49] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=44 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:04:51] [Info]     [PERF 46] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:51] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:51] [Info]     [PERF 46] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:51] [Info]     [PERF 46] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:53] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=45 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:04:55] [Info]     [PERF 47] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:04:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:04:55] [Info]     [PERF 47] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:04:55] [Info]     [PERF 47] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:04:57] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=46 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:05:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=47 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 16 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 4 from 'afipc' -- only 1/2 fragment(s) arrived within 300s.
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 17 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=480s -- TX: 3278B total, 0bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 6
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=48): avg=1799ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-116dBm last_rssi=-80dBm last_snr=12.25dB rx_channel_util=15.0% (ALL traffic on this channel, not just ours) recv=113 sent=77 recv_errors=12 tx_queue_len=0 battery_mv=3999
+[2026-09-13 11:05:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=42, ANNOUNCE=5, PROOF=1
+[2026-09-13 11:05:23] [Info]     [PERF 48] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:05:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:05:23] [Info]     [PERF 48] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:05:23] [Info]     [PERF 48] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:05:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=48 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:05:31] [Info]     [PERF 49] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:05:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:05:31] [Info]     [PERF 49] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:05:31] [Info]     [PERF 49] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:05:37] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=49 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:05:39] [Info]     [PERF 50] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:05:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:05:39] [Info]     [PERF 50] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:05:39] [Info]     [PERF 50] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:05:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=50 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:05:46] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 18 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:05:47] [Info]     [PERF 51] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:05:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:05:47] [Info]     [PERF 51] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:05:47] [Info]     [PERF 51] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:05:53] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=51 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:06:09] [Info]     [PERF 52] OUT size=230 ptype=1 broadcast=True
+[2026-09-13 11:06:09] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:06:09] [Info]     [PERF 52] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:06:09] [Info]     [PERF 52] QUEUE(channel) priority=1 depth=2
+[2026-09-13 11:06:09] [Info]     [PERF 52] QUEUE(channel) priority=1 depth=3
+[2026-09-13 11:06:09] [Info]     [PERF 53] OUT size=192 ptype=1 broadcast=True
+[2026-09-13 11:06:09] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:06:09] [Info]     [PERF 53] QUEUE(channel) priority=1 depth=4
+[2026-09-13 11:06:09] [Info]     [PERF 53] QUEUE(channel) priority=1 depth=5
+[2026-09-13 11:06:09] [Info]     [PERF 53] QUEUE(channel) priority=1 depth=6
+[2026-09-13 11:06:09] [Info]     [PERF 52] DEQUEUE(channel) priority=1 queue_wait=0.001s depth=5
+[2026-09-13 11:06:10] [Info]     [PERF 52] DEQUEUE(channel) priority=1 queue_wait=1.024s depth=4
+[2026-09-13 11:06:11] [Info]     [PERF 52] DEQUEUE(channel) priority=1 queue_wait=2.047s depth=3
+[2026-09-13 11:06:12] [Info]     [PERF 53] DEQUEUE(channel) priority=1 queue_wait=3.070s depth=2
+[2026-09-13 11:06:13] [Info]     [PERF 53] DEQUEUE(channel) priority=1 queue_wait=4.092s depth=1
+[2026-09-13 11:06:14] [Info]     [PERF 53] DEQUEUE(channel) priority=1 queue_wait=5.115s depth=0
+[2026-09-13 11:06:15] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=52 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 19 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 10 from 'afipc' -- only 1/2 fragment(s) arrived within 300s.
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 20 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=540s -- TX: 3904B total, 338bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 10
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=54): avg=1734ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-113dBm last_rssi=-83dBm last_snr=11.5dB rx_channel_util=15.0% (ALL traffic on this channel, not just ours) recv=126 sent=87 recv_errors=14 tx_queue_len=0 battery_mv=4104
+[2026-09-13 11:06:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=46, ANNOUNCE=7, PROOF=1
+[2026-09-13 11:06:18] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=53 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:06:28] [Info]     [PERF 54] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:06:28] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:06:28] [Info]     [PERF 54] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:06:28] [Info]     [PERF 54] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:06:29] [Info]     [PERF 55] OUT size=202 ptype=1 broadcast=True
+[2026-09-13 11:06:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:06:29] [Info]     [PERF 55] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:06:29] [Info]     [PERF 55] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:06:29] [Info]     [PERF 55] QUEUE(channel) priority=1 depth=2
+[2026-09-13 11:06:29] [Info]     [PERF 55] DEQUEUE(channel) priority=1 queue_wait=0.001s depth=2
+[2026-09-13 11:06:30] [Info]     [PERF 55] DEQUEUE(channel) priority=1 queue_wait=1.024s depth=1
+[2026-09-13 11:06:31] [Info]     [PERF 55] DEQUEUE(channel) priority=1 queue_wait=2.047s depth=0
+[2026-09-13 11:06:34] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=54 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:06:35] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=55 (3 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:06:46] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 21 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:06:46] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 23 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 24 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=600s -- TX: 4157B total, 0bps (10s avg), peak 2 frag/s -- RX: 83B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 4
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 2 total, 1 failed (50.0%) -- per-link failure rate: 7bd024b5d082...=50% (1/2)
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=56): avg=1709ms min=17ms max=72161ms -- MeshCore-level DIRECT send+ACK RTT (n=1): avg=5546ms min=5546ms max=5546ms -- per-link: 7bd024b5d082...avg=5546ms
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, Broken Hill=-1 -- local mesh utilization: noise_floor=-116dBm last_rssi=-122dBm last_snr=-5.25dB rx_channel_util=6.7% (ALL traffic on this channel, not just ours) recv=133 sent=91 recv_errors=16 tx_queue_len=0 battery_mv=4034
+[2026-09-13 11:07:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=47, ANNOUNCE=8, PROOF=1
+^C[2026-09-13 11:07:37] [Notice]   Error while shutting down socket for TCPInterface[Home interface/202.171.189.142:4242]: [Errno 107] Transport endpoint is not connected
+afi@thinkpad-mint:~$ rnsd
+[2026-09-13 11:10:29] [Warning]  AutoInterface[Default Interface] could not autoconfigure. This interface currently provides no connectivity.
+[2026-09-13 11:10:31] [Error]    Initial connection for TCPInterface[Home interface/202.171.189.142:4242] could not be established: [Errno 101] Network is unreachable
+[2026-09-13 11:10:31] [Error]    Leaving unconnected and retrying connection in 5 seconds.
+[2026-09-13 11:10:31] [Notice]   Loading external interface "MeshCore_Dynamic_Interface.py" from "/home/afi/.reticulum/interfaces"
+INFO:meshcore:Serial Connection started
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Connected to MeshCore device (serial port=/dev/ttyUSB0 baudrate=115200).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Node identity: 'a' key=343377c464a79a48... [router]
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: No radio override configured -- using the node's currently stored radio settings.
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Channel configured: idx=35 name='RNSTunnel'.
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Initial contact fetch OK (7 contact(s) known).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'b' -> 7bd024b5d082747e... [capability unknown]
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'afipc' -> 7bd024b5d082747e... [capability unknown]
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Restored 2 peer binding(s) from a previous session (still confirmed present in the MeshCore device's own contact table).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: telemetry_mode_base set to ALLOW_FLAGS -- base telemetry (and so path discovery) will be answered only for peers granted the permission bit via a confirmed RNSBIND (see _grant_telemetry_permission).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Contact-update events bound: NEW_CONTACT, CONTACTS, CONTACTS_FULL, PATH_UPDATE, ADVERTISEMENT.
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: DIRECT messaging ENABLED (receive event=CONTACT_MSG_RECV).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Direct and channel outgoing worker tasks started (independent queues, maxsize=512 each).
+[2026-09-13 11:10:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Interface ready -- transport=serial can_route=True allow_direct=True direct_api=True payload_size=64 peer_ttl=86400s auto_reconnect=True(3 attempts) debug_logs=True.
+[2026-09-13 11:10:31] [Notice]   Started rnsd version 1.4.2
+[2026-09-13 11:10:36] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 1/3, cap=R)
+[2026-09-13 11:10:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'afipc' -> 7bd024b5d082747e... [router]
+[2026-09-13 11:10:47] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Peer 'afipc' -> 7bd024b5d082747e... [router]
+[2026-09-13 11:10:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Auto-adjusting payload_size from 64 to 78 due to node name length.
+[2026-09-13 11:10:59] [Info]     [PERF 0] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:10:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:10:59] [Info]     [PERF 0] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:10:59] [Info]     [PERF 0] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:05] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=0 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:10] [Info]     [PERF 1] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:10] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:10] [Info]     [PERF 1] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:10] [Info]     [PERF 1] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:16] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=1 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:23] [Info]     [PERF 2] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:23] [Info]     [PERF 2] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:23] [Info]     [PERF 2] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:27] [Info]     [PERF 3] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:27] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:27] [Info]     [PERF 3] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:27] [Info]     [PERF 3] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=2 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:31] [Info]     [PERF 4] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:31] [Info]     [PERF 4] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:31] [Info]     [PERF 4] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=60s -- TX: 255B total, 122bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 5
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=5): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1 -- local mesh utilization: not yet available
+[2026-09-13 11:11:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=5
+[2026-09-13 11:11:33] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=3 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:35] [Info]     [PERF 5] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:35] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:35] [Info]     [PERF 5] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:35] [Info]     [PERF 5] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:36] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 2/3, cap=R)
+[2026-09-13 11:11:37] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=4 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:39] [Info]     [PERF 6] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:39] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:39] [Info]     [PERF 6] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:39] [Info]     [PERF 6] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:11:41] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=5 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:45] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=6 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:11:52] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Path for d688908d71f97278... changed via EventType.CONTACTS: None -> out_path_len=-1 out_path=.
+[2026-09-13 11:11:52] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'WRR Broken Hill.' -> d688908d71f97278... [capability unknown]
+[2026-09-13 11:11:55] [Info]     [PERF 7] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:11:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:11:55] [Info]     [PERF 7] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:11:55] [Info]     [PERF 7] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=7 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:12:03] [Info]     [PERF 8] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:12:03] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:12:03] [Info]     [PERF 8] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:12:03] [Info]     [PERF 8] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:09] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=8 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:12:11] [Info]     [PERF 9] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:12:11] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:12:11] [Info]     [PERF 9] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:12:11] [Info]     [PERF 9] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=9 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:12:19] [Info]     [PERF 10] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:12:19] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:12:19] [Info]     [PERF 10] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:12:19] [Info]     [PERF 10] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:25] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=10 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:12:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=120s -- TX: 561B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 6
+[2026-09-13 11:12:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:12:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=11): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:12:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-103dBm last_rssi=-101dBm last_snr=1.0dB rx_channel_util=10.0% (ALL traffic on this channel, not just ours) recv=152 sent=104 recv_errors=23 tx_queue_len=0 battery_mv=3947
+[2026-09-13 11:12:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=11
+[2026-09-13 11:12:36] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Startup announcement — sending RNSBIND_REQ (attempt 3/3, cap=R)
+[2026-09-13 11:12:50] [Info]     [PERF 11] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:12:50] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:12:50] [Info]     [PERF 11] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:12:50] [Info]     [PERF 11] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:55] [Info]     [PERF 12] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:12:55] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:12:55] [Info]     [PERF 12] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:12:55] [Info]     [PERF 12] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:12:56] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=11 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:00] [Info]     [PERF 13] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:00] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:00] [Info]     [PERF 13] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:00] [Info]     [PERF 13] DEQUEUE(channel) priority=1 queue_wait=0.001s depth=0
+[2026-09-13 11:13:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=12 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:06] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=13 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:11] [Info]     [PERF 14] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:11] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:11] [Info]     [PERF 14] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:11] [Info]     [PERF 14] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:15] [Info]     [PERF 15] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:15] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:15] [Info]     [PERF 15] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:15] [Info]     [PERF 15] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=14 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:19] [Info]     [PERF 16] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:19] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:19] [Info]     [PERF 16] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:19] [Info]     [PERF 16] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:21] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 3 flood packet(s) on the channel in the 6s after sending pkt_id=15 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:23] [Info]     [PERF 17] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:23] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:23] [Info]     [PERF 17] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:23] [Info]     [PERF 17] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:25] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=16 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:27] [Info]     [PERF 18] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:27] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:27] [Info]     [PERF 18] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:27] [Info]     [PERF 18] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:29] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=17 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=180s -- TX: 969B total, 82bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 8
+[2026-09-13 11:13:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:13:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=19): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:13:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-103dBm last_rssi=-104dBm last_snr=-1.75dB rx_channel_util=13.3% (ALL traffic on this channel, not just ours) recv=166 sent=113 recv_errors=28 tx_queue_len=0 battery_mv=4034
+[2026-09-13 11:13:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=19
+[2026-09-13 11:13:33] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=18 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:36] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Sent RNSBIND heartbeat [cap=R] (next in 3600s).
+[2026-09-13 11:13:43] [Info]     [PERF 19] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:43] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:43] [Info]     [PERF 19] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:43] [Info]     [PERF 19] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:49] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=19 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:51] [Info]     [PERF 20] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:51] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:51] [Info]     [PERF 20] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:51] [Info]     [PERF 20] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:13:57] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=20 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:13:59] [Info]     [PERF 21] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:13:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:13:59] [Info]     [PERF 21] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:13:59] [Info]     [PERF 21] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:14:05] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=21 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:14:07] [Info]     [PERF 22] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:14:07] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:14:07] [Info]     [PERF 22] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:14:07] [Info]     [PERF 22] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:14:13] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 0 flood packet(s) on the channel in the 6s after sending pkt_id=22 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:14:30] [Info]     [PERF 23] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:14:30] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:14:30] [Info]     [PERF 23] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:14:30] [Info]     [PERF 23] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:14:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=240s -- TX: 1224B total, 41bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 5
+[2026-09-13 11:14:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:14:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=24): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:14:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-104dBm last_rssi=-99dBm last_snr=2.75dB rx_channel_util=8.3% (ALL traffic on this channel, not just ours) recv=175 sent=119 recv_errors=30 tx_queue_len=0 battery_mv=4052
+[2026-09-13 11:14:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=24
+[2026-09-13 11:14:36] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=23 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:14:59] [Info]     [PERF 24] OUT size=51 ptype=0 broadcast=True
+[2026-09-13 11:14:59] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 11:14:59] [Info]     [PERF 24] QUEUE(channel) priority=1 depth=1
+[2026-09-13 11:14:59] [Info]     [PERF 24] DEQUEUE(channel) priority=1 queue_wait=0.000s depth=0
+[2026-09-13 11:15:05] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Heard 1 flood packet(s) on the channel in the 6s after sending pkt_id=24 (1 fragment(s)) -- NOTE: this counts ALL flood traffic in that window, not confirmed to be specifically repeats of this message (MeshCore's own per-packet dedup means an exact repeat of our own message never reaches this interface's content-level handling, so this raw counter is the closest approximation available).
+[2026-09-13 11:15:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=300s -- TX: 1275B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 1
+[2026-09-13 11:15:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:15:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:15:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-101dBm last_rssi=-96dBm last_snr=6.0dB rx_channel_util=6.7% (ALL traffic on this channel, not just ours) recv=181 sent=120 recv_errors=32 tx_queue_len=0 battery_mv=4017
+[2026-09-13 11:15:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 42 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 43 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 44 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=361s -- TX: 1275B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 0
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-110dBm last_rssi=-96dBm last_snr=6.0dB rx_channel_util=0.0% (ALL traffic on this channel, not just ours) recv=181 sent=120 recv_errors=32 tx_queue_len=0 battery_mv=4104
+[2026-09-13 11:16:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 46 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 47 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=421s -- TX: 1275B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 0
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-104dBm last_rssi=-96dBm last_snr=6.0dB rx_channel_util=0.0% (ALL traffic on this channel, not just ours) recv=181 sent=120 recv_errors=32 tx_queue_len=0 battery_mv=4069
+[2026-09-13 11:17:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25
+[2026-09-13 11:18:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 50 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:18:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 51 from 'afipc' -- only 2/3 fragment(s) arrived within 300s.
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 52 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 53 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=481s -- TX: 1275B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 0
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-104dBm last_rssi=-96dBm last_snr=6.0dB rx_channel_util=0.0% (ALL traffic on this channel, not just ours) recv=181 sent=120 recv_errors=32 tx_queue_len=0 battery_mv=4122
+[2026-09-13 11:18:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25
+[2026-09-13 11:19:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 55 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:19:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 56 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:19:01] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 57 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:19:31] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 58 from 'afipc' -- only 1/3 fragment(s) arrived within 300s.
+[2026-09-13 11:19:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] uptime=541s -- TX: 1275B total, 0bps (10s avg), peak 1 frag/s -- RX: 0B total, 0bps (10s avg), peak 2 frag/s -- flood sends (last 60s): 0
+[2026-09-13 11:19:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] direct sends: 0 total, 0 failed (0.0%) -- per-link failure rate: no direct sends yet
+[2026-09-13 11:19:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] RNS-level TX latency (queue-to-delivered, n=25): avg=17ms min=17ms max=18ms -- MeshCore-level DIRECT send+ACK RTT (n=0): avg=0ms min=0ms max=0ms -- per-link: no direct ACKs yet
+[2026-09-13 11:19:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] peer hops: b=1, afipc=1, WRR Broken Hill.=-1 -- local mesh utilization: noise_floor=-114dBm last_rssi=-96dBm last_snr=6.0dB rx_channel_util=0.0% (ALL traffic on this channel, not just ours) recv=181 sent=120 recv_errors=32 tx_queue_len=0 battery_mv=4034
+[2026-09-13 11:19:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: [STATS] outgoing queue depth: direct=0 channel=0 -- consecutive path-discovery failures: none -- consecutive DIRECT-path failures: none -- outgoing packet-type mix: DATA=25
+[2026-09-13 11:20:02] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 59 from 'afipc' -- only 2/4 fragment(s) arrived within 300s.
+[2026-09-13 11:20:17] [Warning]  MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: MeshCore connection lost (reason=reconnect_failed, reconnect attempts exhausted). Interface marked offline -- outgoing sends will be skipped until the link recovers.
+[2026-09-13 11:20:32] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Dropping incomplete reassembly for pkt_id 60 from 'afipc' -- only 1/4 fragment(s) arrived within 300s.
+[2026-09-13 11:24:36] [Info]     Reconnected socket for TCPInterface[Home interface/202.171.189.142:4242].
+
+
+

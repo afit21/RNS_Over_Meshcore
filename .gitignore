@@ -172,3 +172,10 @@ cython_debug/
 
 #Official Meshcore Implementations for reference
 referenceprojects/
+
+# Claude Code project notes -- guidance for the AI assistant, not meant
+# to be published/tracked in this repo. Fieldtests stay tracked; this is
+# only for notes files scoped to Claude itself. No leading/trailing slash,
+# so this also matches any nested CLAUDE.md (e.g. under a subdirectory).
+CLAUDE.md
+CLAUDE.local.md

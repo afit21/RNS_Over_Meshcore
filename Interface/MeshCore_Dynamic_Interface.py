@@ -245,6 +245,12 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
   │     # binding events at RNS.LOG_INFO, so they show up at the standard   │
   │     # [logging] loglevel = 4 without needing full RNS-core debug (7).   │
   │                                                                         │
+  │     # TESTING ONLY -- see "TESTING OVERRIDES" below. Leave unset for    │
+  │     # any real deployment.                                              │
+  │     # force_direct_path_peer = <hex prefix of the target's pubkey>     │
+  │     # force_direct_path = <hex repeater-hash path>[:<hash_mode>]        │
+  │     # channel_relay_only = no                                          │
+  │                                                                         │
   │   [[Backbone Interface]]                                                │
   │     type = BackboneInterface                                            │
   │     interface_enabled = yes                                             │
@@ -256,6 +262,74 @@ INFRASTRUCTURE / TRANSPORT NODE  (fixed gateway with backbone connectivity)
   │     announce_rate_grace   = 2                                           │
   │     announce_rate_penalty = 7200                                        │
   └─────────────────────────────────────────────────────────────────────────┘
+
+TESTING OVERRIDES (see _configure_testing_overrides -- neither is meant for
+a real deployment; both log loudly at RNS.LOG_WARNING when active):
+
+  force_direct_path_peer / force_direct_path
+      Pins one peer's MeshCore out_path to a manually-specified repeater
+      route instead of letting normal path discovery/reset-to-flood run,
+      so a field test can ask "does traffic survive over THIS specific
+      repeater" without path-discovery flakiness or an automatic reset
+      undoing the pinned route mid-test -- both of which showed up as
+      confounds in prior field tests (fieldtests/reports/). Format:
+      force_direct_path_peer is a hex prefix of the target's MeshCore
+      pubkey; force_direct_path is a hex string of concatenated repeater-
+      identity hashes (one hop per group of hash_mode+1 bytes, default
+      mode 0 = 1 byte/hop), optionally suffixed `:<hash_mode>` (0, 1, or
+      2). Applied once per session via change_contact_path() -- the same
+      persistence mechanism discover_path() already uses for a normally
+      -discovered route -- as soon as the peer is bound. Invalid config
+      (bad hex, unsupported hash_mode, too many hops) is rejected at
+      startup with a clear reason; the interface then runs as if neither
+      key were set, it does not refuse to start.
+
+  channel_relay_only
+      Silently drops any received CHANNEL (flood) message whose firmware-
+      reported path_len shows no repeater has touched it yet (0 hops, or
+      the library's 255 "not a flood packet" sentinel) -- including
+      RNSBIND/RNSBIND_REQ peer-discovery traffic -- so a test session only
+      "sees" genuinely multi-hop deliveries. See _on_channel_msg.
+
+DESIGN INVARIANTS (read before adding a new radio command call site):
+
+  1. Never trust a bare await of self._mc.commands.foo(...) to mean
+     success. Route its result through _check_event(result, context,
+     expected_type=...), or make a deliberate, commented exception (e.g.
+     a reset_path call inside try/except that's already intentionally
+     best-effort). This exists because a CHANNEL send once ignored an
+     EventType.ERROR reply and treated a firmware-rejected send as
+     delivered, silently -- see changelog.md.
+
+  2. Never wait on a bare event TYPE (dispatcher.wait_for_event, or the
+     meshcore library's own commands.send()) when more than one in-flight
+     operation could produce that type. The meshcore library matches
+     replies by type alone with no per-request correlation id, so two
+     concurrent waits on the same type (e.g. send_msg and
+     send_path_discovery both produce MSG_SENT; nearly everything accepts
+     ERROR) can each be handed the other's reply. _pending_acks (keyed by
+     the firmware's own expected_ack tag) and discover_path's pubkey_pre
+     check are the pattern to follow: filter by an identity field in the
+     payload, not by type alone. _install_command_serializer's lock
+     around commands.send() closes this for ordinary command round trips
+     already; anything that waits OUTSIDE that (a targeted
+     dispatcher.wait_for_event, the way DIRECT ACKs used to work) needs
+     its own identity check.
+
+  3. Every self.X = ... cfg.get("X", ...) in a _configure_* method must be
+     read somewhere else in this file. tests/test_config_usage.py enforces
+     this with a static scan -- a config value that's parsed but never
+     used again fails silently for users who set it, expecting it to do
+     something. Two kinds of exception exist there, kept deliberately
+     distinct: EXTERNALLY_CONSUMED_BY_RNS_CORE for an attribute this file
+     never reads itself but RNS core reads directly via the
+     RNS.Interfaces.Interface base-class contract (bitrate, for HW_MTU
+     sizing and timeout estimates -- correct and permanent, not a bug),
+     and ALLOWED_DEAD for a genuine, temporary gap (firmware_text_limit:
+     _auto_payload_size is hardcoded to a fixed value for an in-progress
+     test rather than reading it -- see the TODO there; restore
+     `firmware_limit = self.firmware_text_limit` and remove both entries
+     once that's done).
 """
 
 import RNS
@@ -271,7 +345,7 @@ import queue
 import random
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -821,6 +895,7 @@ class MeshCore_Dynamic_Interface(Interface):
         self._configure_retransmission(cfg)
         self._configure_stale_fragment_dropping(cfg)
         self._configure_routing_and_debug(cfg)
+        self._configure_testing_overrides(cfg)
 
         self._init_runtime_state()
         self._start_event_loop_and_wait()
@@ -1162,6 +1237,128 @@ class MeshCore_Dynamic_Interface(Interface):
             not in ("no", "false", "0")
         )
 
+    def _configure_testing_overrides(self, cfg) -> None:
+        """Diagnostic-only knobs for field-testing a specific repeater hop
+        in isolation, independent of the interface's own adaptive routing.
+        Neither of these is meant for a real deployment -- both are logged
+        loudly at startup when active so they can't be left on by accident.
+
+        force_direct_path[_peer]: pins ONE peer's MeshCore out_path to a
+        manually-specified route instead of letting path discovery/
+        contact-table updates resolve it, and disables this interface's
+        own stale-path-reset-to-flood logic for that peer for the rest of
+        the session (see _is_forced_peer, used from discover_path and
+        _maybe_reset_stale_path). This exists to let a field test ask "does
+        traffic survive over THIS specific repeater" without path-discovery
+        flakiness or an automatic reset-to-flood undoing the pinned route
+        mid-test -- both of which showed up as confounds in prior field
+        tests (see fieldtests/reports/). It only ever narrows what this
+        interface does (skips discovery/reset for one peer); it never
+        constructs a path the MeshCore firmware wouldn't otherwise accept
+        -- change_contact_path (opcode 0x09) is the same persistence path
+        discover_path() already uses for a normally-discovered route.
+
+        channel_relay_only: silently drops any received CHANNEL (flood)
+        message that shows no evidence of having been relayed by a
+        repeater, so a test session only "sees" genuinely multi-hop
+        deliveries. See _on_channel_msg."""
+        force_peer_raw = str(cfg.get("force_direct_path_peer", "")).strip().lower()
+        force_path_raw = str(cfg.get("force_direct_path", "")).strip().lower()
+        self.force_direct_path_peer = None
+        self.force_direct_path_hex = None
+        self.force_direct_path_hash_mode = 0
+
+        if bool(force_peer_raw) != bool(force_path_raw):
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"force_direct_path_peer and force_direct_path must both be "
+                f"set together -- got peer={force_peer_raw!r} "
+                f"path={force_path_raw!r}. Ignoring both; normal path "
+                f"discovery/reset will be used.",
+                RNS.LOG_ERROR
+            )
+        elif force_peer_raw and force_path_raw:
+            path_hex = force_path_raw
+            hash_mode = 0
+            if ":" in force_path_raw:
+                path_hex, _, mode_str = force_path_raw.partition(":")
+                try:
+                    hash_mode = int(mode_str)
+                except ValueError:
+                    path_hex = ""  # fail validation below with a clear reason
+
+            valid = True
+            reason = ""
+            hop_count = 0
+            if not path_hex or any(c not in "0123456789abcdef" for c in path_hex):
+                valid, reason = False, "path is not valid hex"
+            elif len(path_hex) % 2 != 0:
+                valid, reason = False, "path hex has an odd number of characters"
+            elif hash_mode not in (0, 1, 2):
+                # Firmware/library reject a 4-byte-per-hop path outright
+                # (Packet::isValidPathLen) -- see meshcore's
+                # commands/base.py encode_reply_path for the same rule.
+                valid, reason = False, f"hash_mode must be 0, 1, or 2 (got {hash_mode})"
+            else:
+                hash_size = hash_mode + 1
+                path_bytes = len(path_hex) // 2
+                if path_bytes % hash_size != 0:
+                    valid, reason = False, (
+                        f"path length ({path_bytes} bytes) isn't a whole "
+                        f"number of {hash_size}-byte hops for hash_mode={hash_mode}"
+                    )
+                else:
+                    hop_count = path_bytes // hash_size
+                    # plen's low 6 bits hold the hop count (MAX 63), and the
+                    # firmware's path buffer is a fixed 64 bytes total --
+                    # see MeshCore.h MAX_PATH_SIZE and Packet.h getPathHashCount.
+                    if not (1 <= hop_count <= 63) or path_bytes > 64:
+                        valid, reason = False, (
+                            f"{hop_count} hop(s) at {hash_size} byte(s)/hop "
+                            f"({path_bytes} bytes) exceeds MeshCore's limit "
+                            f"(63 hops, 64 bytes total)"
+                        )
+
+            if not valid:
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"force_direct_path={force_path_raw!r} is invalid: "
+                    f"{reason}. Ignoring; normal path discovery/reset will "
+                    f"be used.",
+                    RNS.LOG_ERROR
+                )
+            else:
+                self.force_direct_path_peer = force_peer_raw
+                self.force_direct_path_hex = path_hex
+                self.force_direct_path_hash_mode = hash_mode
+                RNS.log(
+                    f"MeshCore_Dynamic_Interface [{self.name}]: "
+                    f"*** TESTING OVERRIDE ACTIVE *** peer {force_peer_raw}... "
+                    f"will be pinned to manual path {path_hex} "
+                    f"(hash_mode={hash_mode}, {hop_count} hop(s)) as soon as "
+                    f"it's known. Path discovery and the automatic "
+                    f"stale-path/reset-to-flood logic are DISABLED for this "
+                    f"peer for the rest of this session. Remove "
+                    f"force_direct_path_peer/force_direct_path before real "
+                    f"deployment.",
+                    RNS.LOG_WARNING
+                )
+
+        self.channel_relay_only = (
+            cfg.get("channel_relay_only", "no").lower() not in ("no", "false", "0")
+        )
+        if self.channel_relay_only:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"*** TESTING OVERRIDE ACTIVE *** channel_relay_only is on -- "
+                f"any received CHANNEL message that doesn't show evidence of "
+                f"passing through at least one repeater (path_len 0 or 255) "
+                f"will be silently dropped, including RNSBIND/RNSBIND_REQ "
+                f"peer-discovery traffic. Remove channel_relay_only before "
+                f"real deployment.",
+                RNS.LOG_WARNING
+            )
+
     def _init_runtime_state(self) -> None:
         """Initialize all internal mutable state (queues, locks, caches,
         rate-limiter/peer bookkeeping) ahead of async setup. Pure
@@ -1171,6 +1368,13 @@ class MeshCore_Dynamic_Interface(Interface):
         self._EventType   = None
         self._loop        = None
         self._loop_thread = None
+
+        # Set True once _apply_forced_direct_path has been scheduled for
+        # this session's force_direct_path_peer (if configured), so a
+        # forced peer being re-bound repeatedly (every contact refresh,
+        # every RNSBIND) doesn't re-issue change_contact_path over and
+        # over. See _configure_testing_overrides.
+        self._forced_path_applied = False
 
         # Thread-safe queues used to decouple synchronous execution from the
         # worker loops. DIRECT and CHANNEL traffic get independent queues (and
@@ -1425,7 +1629,13 @@ class MeshCore_Dynamic_Interface(Interface):
         docstring's PAYLOAD SIZE section for the derivation. No-op (returns
         the configured payload_size unchanged) until the node name is known."""
         if self._own_node_name:
-            firmware_limit = 120 # TODO: Verify
+            # TODO: deliberately hardcoded (not self.firmware_text_limit)
+            # while testing a specific payload-size value -- see design
+            # invariant #3 in the module docstring and the matching
+            # allowlist entry in tests/test_config_usage.py. Restore
+            # `firmware_limit = self.firmware_text_limit` and remove both
+            # once that test is done.
+            firmware_limit = 120
             # Safety margin for firmware variations, and for the reference
             # firmware's own behavior of shrinking its text-length ceiling
             # by 2 more characters once a DIRECT message reaches its 4th+
@@ -1525,7 +1735,22 @@ class MeshCore_Dynamic_Interface(Interface):
         if not await self._setup_connect_transport(MeshCore, ET):
             return
 
-        self._install_command_serializer()
+        if not self._install_command_serializer():
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"Failed to install the radio-command serializer -- refusing "
+                f"to start. Without it, concurrent commands (a DIRECT send "
+                f"racing a path-discovery request, for example) can be "
+                f"handed each other's replies by the meshcore library, "
+                f"which previously caused sends to silently fail or "
+                f"succeed for the wrong reason. This usually means the "
+                f"installed 'meshcore' library's CommandHandler.send() no "
+                f"longer has the expected shape -- check for a library "
+                f"version change.",
+                RNS.LOG_ERROR
+            )
+            return
+
         await self._setup_fetch_identity()
         await self._setup_apply_radio_overrides()
         await self._setup_configure_channel()
@@ -1616,7 +1841,7 @@ class MeshCore_Dynamic_Interface(Interface):
 
         return True
 
-    def _install_command_serializer(self) -> None:
+    def _install_command_serializer(self) -> bool:
         """Serialize every command sent to the radio through one lock.
 
         The meshcore library's CommandHandler.send() has no locking and
@@ -1630,21 +1855,49 @@ class MeshCore_Dynamic_Interface(Interface):
         expected_ack (and the discovery adopting the message's reply), so
         neither could ever complete. Wrapping send() itself, rather than each
         call site, also covers the library's own internal commands (auto
-        message fetching, ensure_contacts). Only the command round trip is
-        held; delivery-ACK waits happen outside the lock."""
-        assert self._mc is not None
-        commands = self._mc.commands
-        original_send = commands.send
+        message fetching, ensure_contacts) and any future call site added
+        here -- there is deliberately no second way to reach the radio that
+        could bypass this. Only the command round trip is held;
+        delivery-ACK waits happen outside the lock.
+
+        Returns True once installed (or confirmed already installed) and
+        verified in place; False if commands.send doesn't have the expected
+        shape to wrap, or the post-install check doesn't see the wrapper --
+        the caller treats that as fatal rather than starting up silently
+        unprotected."""
+        if self._mc is None:
+            return False
+        commands: Any = getattr(self._mc, "commands", None)
+        original_send: Any = getattr(commands, "send", None)
+        if commands is None or original_send is None or not callable(original_send):
+            return False
+
         if getattr(original_send, "_rns_serialized", False):
-            return
+            return True  # already installed (e.g. a second _async_setup call)
+
         lock = asyncio.Lock()
+
+        # Re-widened to Any right before the closure: `callable(original_send)`
+        # above narrows the type checker's view of it from Any down to a
+        # plain (...) -> object callable, which "return await" then
+        # rejects (object isn't Awaitable) even though this is correct,
+        # ordinary dynamic Python at runtime.
+        original_send_any: Any = original_send
 
         async def serialized_send(*args, **kwargs):
             async with lock:
-                return await original_send(*args, **kwargs)
+                return await original_send_any(*args, **kwargs)
 
         setattr(serialized_send, "_rns_serialized", True)
         commands.send = serialized_send
+
+        # Verify the assignment actually stuck rather than trusting it
+        # silently -- e.g. commands.send could be a property with no
+        # setter on some future library version, in which case the
+        # attribute set above is either rejected outright or shadows
+        # nothing (subclass/instance attribute vs. a descriptor on the
+        # class), and every command would keep going out unlocked.
+        return getattr(self._mc.commands.send, "_rns_serialized", False) is True
 
     async def _setup_fetch_identity(self) -> None:
         """Fetch this node's own name/pubkey via send_appstart() -- needed
@@ -2524,6 +2777,52 @@ class MeshCore_Dynamic_Interface(Interface):
                     self._path_req_failures.get(target_key, 0) + 1
                 )
 
+    def _is_forced_peer(self, key: str) -> bool:
+        """True if `key` (a MeshCore pubkey, or any prefix of one) is the
+        peer pinned by force_direct_path_peer for manual-path testing (see
+        _configure_testing_overrides). Compared as mutual prefixes since
+        callers pass either a full pubkey or a short prefix depending on
+        context (e.g. _maybe_reset_stale_path's `target`)."""
+        if not self.force_direct_path_peer or not key:
+            return False
+        key = str(key).strip().lower()
+        forced = self.force_direct_path_peer
+        return key.startswith(forced) or forced.startswith(key)
+
+    async def _apply_forced_direct_path(self, contact) -> None:
+        """One-shot: persist force_direct_path onto `contact` via the same
+        change_contact_path() mechanism discover_path() uses for a
+        normally-discovered route, then leave it alone -- discover_path
+        and _maybe_reset_stale_path both refuse to touch this peer for the
+        rest of the session (see _is_forced_peer)."""
+        key = contact.get("public_key", "") if isinstance(contact, dict) else ""
+        if self._mc is None:
+            return
+        try:
+            result = self._check_event(
+                await self._mc.commands.change_contact_path(
+                    contact, self.force_direct_path_hex,
+                    path_hash_mode=self.force_direct_path_hash_mode,
+                ),
+                "force_direct_path",
+            )
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"TESTING OVERRIDE: pinned {key[:12] if key else '?'}... to "
+                f"manual path {self.force_direct_path_hex} "
+                f"(hash_mode={self.force_direct_path_hash_mode}) -- "
+                f"result={result.type}.",
+                RNS.LOG_WARNING
+            )
+        except Exception as exc:
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"TESTING OVERRIDE: failed to pin {key[:12] if key else '?'}... "
+                f"to manual path {self.force_direct_path_hex}: {exc} -- this "
+                f"peer will behave as if no override were configured.",
+                RNS.LOG_ERROR
+            )
+
     async def discover_path(self, contact):
         """Run a one-shot MeshCore path-discovery query for this contact and
         return the resolved out_path (or None on failure/timeout). Does not
@@ -2540,6 +2839,13 @@ class MeshCore_Dynamic_Interface(Interface):
         await self._mc.ensure_contacts()
 
         key = contact["public_key"]
+
+        if self._is_forced_peer(key):
+            self._debug(
+                f"discover_path: skipping {key[:12]}... -- "
+                f"force_direct_path_peer is pinning this peer for testing."
+            )
+            return None
 
         RNS.log(
             f"PATH DISCOVERY BEFORE: "
@@ -2851,6 +3157,25 @@ class MeshCore_Dynamic_Interface(Interface):
         """Dispatch an incoming channel broadcast: RNSBIND/RNSBIND_REQ
         messages go to _handle_bind, RNS-tunneled text goes to
         _process_tunnel_text. Ignores anything matching neither prefix."""
+        if self.channel_relay_only:
+            # path_len/path_hash_mode come straight off the firmware's own
+            # per-packet header (see meshcore library reader.py's
+            # CHANNEL_MSG_RECV parsing): 0 means this flood packet reached
+            # us with no repeater having appended its hash yet (heard the
+            # originator directly), and 255 is the library's own "not a
+            # flood packet at all" sentinel (isRouteFlood() was false on
+            # the firmware side). Either way, no repeater is known to have
+            # touched it -- drop before any further processing (including
+            # RNSBIND/RNSBIND_REQ) so a test session only sees traffic that
+            # actually made it via a relay.
+            path_len = event.payload.get("path_len")
+            if path_len is None or path_len == 0 or path_len == 255:
+                self._debug(
+                    f"channel_relay_only: dropping unrelayed CHANNEL "
+                    f"message (path_len={path_len!r})."
+                )
+                return
+
         text = event.payload.get("text", "")
 
         rns_idx  = text.find(self.MSG_PREFIX)
@@ -3183,6 +3508,17 @@ class MeshCore_Dynamic_Interface(Interface):
             return
 
         self._log_path_if_changed(key, contact, source)
+
+        if (
+            not self._forced_path_applied
+            and self._is_forced_peer(key)
+            and self._loop is not None
+        ):
+            self._forced_path_applied = True
+            task = asyncio.create_task(self._apply_forced_direct_path(contact))
+            task.add_done_callback(
+                lambda f: self._log_scheduled_task_exceptions(f, "_apply_forced_direct_path")
+            )
 
         name = (
             contact.get("adv_name")
@@ -3954,6 +4290,47 @@ class MeshCore_Dynamic_Interface(Interface):
                 RNS.LOG_INFO
             )
 
+    def _check_event(self, result, context: str, expected_type=None):
+        """Central chokepoint for validating a radio command's reply.
+
+        This exists because of one specific bug: the CHANNEL send path
+        used to `await self._mc.commands.send_chan_msg(...)` and act on
+        success unconditionally, never noticing that the command had
+        actually returned EventType.ERROR (bad channel_idx, the device's
+        own send queue full, or no reply within the library's timeout) --
+        a genuinely rejected send was indistinguishable from a delivered
+        one, with no log trace. See the CHANNEL-send entry in
+        changelog.md.
+
+        EVERY new call site that sends a command to the radio and cares
+        whether it actually worked should route the result through this
+        (or make a deliberate, commented decision not to -- e.g.
+        reset_path/change_contact_path calls made from inside a `try:
+        ... except Exception: log and move on` are intentionally
+        best-effort and don't need it). Don't reintroduce a bare
+        `await self._mc.commands.foo(...)` whose result is never looked
+        at.
+
+        Raises RuntimeError if `result` is None, is EventType.ERROR, or
+        (when `expected_type` is given) isn't that type -- carrying the
+        firmware's own "reason" from the payload when it gave one.
+        Returns `result` unchanged on success, so this composes directly
+        into an assignment: `result = self._check_event(await ..., ...)`.
+        """
+        if result is None:
+            raise RuntimeError(f"{context}: no response")
+        is_error = (
+            self._EventType is not None and result.type == self._EventType.ERROR
+        )
+        wrong_type = expected_type is not None and result.type != expected_type
+        if is_error or wrong_type:
+            reason = (
+                result.payload.get("reason", "unknown")
+                if isinstance(result.payload, dict) else "unknown"
+            )
+            raise RuntimeError(f"{context} rejected: {reason}")
+        return result
+
     async def _send_direct_with_retry(self, target, frag_str) -> None:
         """Attempt a DIRECT send+ACK cycle against `target` up to
         direct_send_attempts times, with a fresh send (and fresh
@@ -3992,13 +4369,10 @@ class MeshCore_Dynamic_Interface(Interface):
                 counts_toward_reset = False
                 try:
                     attempt_start = time.monotonic()
-                    result = await self._mc.commands.send_msg(target, frag_str)
-                    if result is None or result.type != self._EventType.MSG_SENT:
-                        reason = (
-                            result.payload.get("reason", "no path/unknown")
-                            if result is not None else "no response"
-                        )
-                        raise RuntimeError(f"direct send rejected: {reason}")
+                    result = self._check_event(
+                        await self._mc.commands.send_msg(target, frag_str),
+                        "direct send", expected_type=self._EventType.MSG_SENT,
+                    )
 
                     # MSG_SENT confirms the radio put this fragment on air
                     # (each retry is a real separate transmission) but says
@@ -4124,6 +4498,13 @@ class MeshCore_Dynamic_Interface(Interface):
         more patient when the last-polled RSSI still looks reasonable
         (more likely worth one more retry), and fall back to the
         unmultiplied threshold when it doesn't, or isn't available yet."""
+        if self._is_forced_peer(target):
+            self._debug(
+                f"_maybe_reset_stale_path: skipping reset for "
+                f"{target[:12] if target else '?'}... -- "
+                f"force_direct_path_peer is pinning this peer for testing."
+            )
+            return
         if self.direct_path_reset_threshold <= 0 or self._mc is None:
             return
         try:
@@ -4295,13 +4676,10 @@ class MeshCore_Dynamic_Interface(Interface):
             with self._path_req_lock:
                 self._direct_path_failures.pop(target, None)
         else:
-            result = await self._mc.commands.send_chan_msg(self.channel_idx, frag_str)
-            if result is None or result.type == self._EventType.ERROR:
-                reason = (
-                    result.payload.get("reason", "unknown")
-                    if result is not None else "no response"
-                )
-                raise RuntimeError(f"channel send rejected: {reason}")
+            self._check_event(
+                await self._mc.commands.send_chan_msg(self.channel_idx, frag_str),
+                "channel send",
+            )
             self.stats.record_tx()
             self.stats.record_flood_tx()
             self._mark_pkt_fragment_done(pkt_id)

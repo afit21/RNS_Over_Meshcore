@@ -5,6 +5,83 @@ project it was forked from (preserved at
 [`referenceprojects/MeshCore_Dynamic_Interface_original_repo.py`](referenceprojects/MeshCore_Dynamic_Interface_original_repo.py))
 are documented here.
 
+## [Unreleased]
+
+Architectural hardening following the two bugs fixed just above (the
+concurrent-command race and the CHANNEL-send silent failure): rather than
+leaving those as one-off patches, this closes the general patterns behind
+them so a similar bug is harder to reintroduce by accident.
+
+### Added
+
+- **`_check_event`**: a single chokepoint for validating a radio command's
+  reply, used by both the DIRECT and CHANNEL send paths in place of their
+  previous separate, ad hoc checks. Raises on `EventType.ERROR`, no
+  response, or (when given an `expected_type`) the wrong reply type.
+  Documented in the module docstring as design invariant #1: any new
+  command call site that cares about success should route through this
+  rather than trusting a bare `await` to mean the send worked.
+- **`_install_command_serializer` now verifies its own install** and
+  fails closed: it returns `False` (instead of assuming success) if
+  `_mc.commands.send` doesn't have the expected shape to wrap, or if the
+  wrapper assignment doesn't actually stick, and `_async_setup` refuses
+  to bring the interface online at all in that case rather than starting
+  up silently unprotected against the reply-crosstalk bug this closes.
+- **Design invariants section** in the module docstring: the two rules
+  above, plus a third -- every `self.X = cfg.get("X", ...)` must be read
+  somewhere in the file, with two explicitly-labeled, narrow exceptions
+  (an attribute read externally via the `RNS.Interfaces.Interface`
+  base-class contract, like `bitrate`; or a genuine temporary gap, like
+  `firmware_text_limit` while `_auto_payload_size` is hardcoded for an
+  in-progress test) -- written down so a future change doesn't have to
+  re-derive these from field-test forensics again.
+- **`tests/`**: an offline regression suite (`python3 -m unittest
+  discover -s tests`, no radio hardware) built against fakes of the
+  `meshcore` library's command/event shape. Covers: the DIRECT ACK-timing
+  and path-reset bugs fixed above (late ACKs, truncated-wait attempts not
+  counting toward a reset, wrong reply type); the CHANNEL silent-failure
+  bug (`_check_event` actually raising, and the failure reaching
+  `_handle_send_failure`'s log); the command serializer (no two sends'
+  critical sections ever overlap, install fails closed on a malformed
+  `_mc`); and a static AST scan (`test_config_usage.py`) that would have
+  caught the `firmware_text_limit` dead-config bug the day it was
+  introduced -- it already caught one previously-unnoticed instance
+  (`bitrate`, confirmed to be a false positive: consumed externally by
+  RNS core, not actually dead) while being written.
+
+**Testing overrides**, motivated by two confounds identified in
+[`fieldtests/reports/alpha-0.1-snapshot2.md`](fieldtests/reports/alpha-0.1-snapshot2.md):
+path-discovery flakiness and automatic reset-to-flood made it hard to
+tell, from field logs alone, whether a specific repeater hop itself was
+delivering traffic reliably, and there was no way to confirm a received
+CHANNEL message had actually been relayed rather than heard directly.
+Neither knob is meant for a real deployment; both log loudly
+(`RNS.LOG_WARNING`) at startup when active, and reject invalid config
+with a clear reason rather than silently doing nothing.
+
+- **`force_direct_path_peer` / `force_direct_path`**: pins one peer's
+  MeshCore `out_path` to a manually-specified repeater route (validated
+  hex path + hash mode, matching the on-wire format `change_contact_path`
+  already uses) as soon as that peer is bound, via the same persistence
+  mechanism `discover_path()` uses for a normally-discovered route.
+  `discover_path()` and `_maybe_reset_stale_path()` both refuse to touch
+  a pinned peer for the rest of the session (`_is_forced_peer`), so a
+  test against one specific hop can't have its route silently
+  rediscovered or reset out from under it.
+- **`channel_relay_only`**: drops any received CHANNEL message whose
+  firmware-reported `path_len` shows no repeater has touched it yet (0
+  hops, or the library's 255 "not a flood packet" sentinel) -- including
+  `RNSBIND`/`RNSBIND_REQ` peer-discovery traffic -- so a test session
+  only "sees" genuinely multi-hop deliveries. `path_len` was already
+  arriving in every `CHANNEL_MSG_RECV` payload (verified in the
+  `meshcore` library's `reader.py`) but nothing in this interface read it
+  before now.
+- `tests/test_testing_overrides.py`: config validation (valid/invalid
+  hex, mode, hop-count and byte-length limits), `_is_forced_peer` prefix
+  matching, `discover_path`/`_maybe_reset_stale_path` both skipping a
+  pinned peer, and `_on_channel_msg` dropping/passing CHANNEL traffic
+  correctly based on `path_len` and the `channel_relay_only` flag.
+
 ## [alpha-0.1-snapshot2] - 2026-09-12
 
 This release is a direct response to the

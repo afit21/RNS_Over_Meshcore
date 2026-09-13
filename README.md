@@ -299,6 +299,41 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `auto_reconnect` | `yes` | Automatically try to re-establish the link if it drops |
 | `max_reconnect_attempts` | `3` | Reconnect attempts before giving up (only relevant if `auto_reconnect` is enabled) |
 | `debug_level` | `info` | `info` or `debug` — `debug` enables this interface's own verbose diagnostic logs independently of RNS core's global `loglevel`, so you get interface-level detail without RNS core's own debug firehose |
+| `force_direct_path_peer` / `force_direct_path` | *(unset)* | **Testing only** — pins one peer to a manually-specified repeater route instead of normal path discovery. See [Testing overrides](#testing-overrides) below |
+| `channel_relay_only` | `no` | **Testing only** — silently drops any received CHANNEL message with no evidence of repeater relay (`path_len` 0 or 255). See [Testing overrides](#testing-overrides) below |
+
+## Tests
+
+`tests/` has an offline regression suite (no radio hardware needed — it loads the interface module directly and drives it against fakes of the `meshcore` library's command/event shape) covering the outgoing send paths and the design invariants noted at the top of `Interface/MeshCore_Dynamic_Interface.py`. Run it with:
+
+```
+python3 -m unittest discover -s tests
+```
+
+## Testing overrides
+
+Two config options exist purely to make field-testing a specific repeater hop easier to isolate. **Neither is meant for a real deployment** — both log loudly (`RNS.LOG_WARNING`) at startup when active, and invalid values are rejected at startup with a clear reason rather than silently doing nothing or crashing.
+
+**`force_direct_path_peer` / `force_direct_path`** — pins one peer's MeshCore `out_path` to a manually-specified repeater route, instead of letting this interface's own path discovery and stale-path-reset-to-flood logic run for that peer. Useful for asking "does traffic reliably survive over *this specific* repeater" without path-discovery flakiness or an automatic reset undoing the pinned route mid-test.
+
+```ini
+force_direct_path_peer = 7bd024b5      # hex prefix of the target's MeshCore pubkey
+force_direct_path = 9c1a4f             # hex repeater-identity hash(es), one hop per group
+                                        # of (hash_mode+1) bytes -- default hash_mode 0 is
+                                        # 1 byte/hop. Multiple hops are just concatenated
+                                        # hex, e.g. 9c1a4f7b2e01 for two 1-byte hops.
+# force_direct_path = 9c1a4f7b2e01:1   # equivalent 2-byte-hop form (hash_mode suffix)
+```
+
+Applied once per session, as soon as the peer is known, via the same `change_contact_path()` mechanism normal path discovery already uses to persist a route to the MeshCore device's own contact table — so it shows up to the official MeshCore app the same way a normally-discovered path would. If `force_direct_path_peer` is set without `force_direct_path` (or vice versa), or the path is malformed (bad hex, unsupported hash mode, too many hops), both are ignored and the interface runs exactly as if neither were set.
+
+**`channel_relay_only`** — silently drops any received CHANNEL (flood) message that shows no evidence of having passed through a repeater yet, including `RNSBIND`/`RNSBIND_REQ` peer-discovery traffic. This is possible because MeshCore firmware reports each flood message's live repeater-hop count (`path_len`) to the client on every receive: `0` means the message reached this radio directly from the originator's own transmission with no repeater having relayed it yet, and `255` is the library's "not a flood packet at all" sentinel — both are dropped when this is enabled.
+
+```ini
+channel_relay_only = yes
+```
+
+Useful for a test session where you specifically want to confirm nothing is "cheating" by being heard directly — e.g. two nodes accidentally still in direct range of each other during what's meant to be a multi-hop test.
 
 ## Limitations
 
