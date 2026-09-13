@@ -65,6 +65,18 @@ ASPECT_DEFAULT = "relay_probe"
 DEFAULT_PROBE_SIZE = 16
 DEFAULT_TIMEOUT = 12
 PAYLOAD_HEADER = struct.Struct(">Id")  # seq:uint32, send_time:double
+FALLBACK_MEDIUM_PATH_TIMEOUT = 60.0
+
+
+def medium_path_timeout(reticulum) -> float:
+    """RNS.Reticulum.get_medium_path_timeout() was added after 1.4.2 --
+    older installs (seen in the field: rnsd 1.4.2 on one node, 1.5.2 on
+    another, same test) don't have it. Fall back to a fixed, generous
+    timeout on those rather than crashing the probe."""
+    getter = getattr(reticulum, "get_medium_path_timeout", None)
+    if getter is None:
+        return FALLBACK_MEDIUM_PATH_TIMEOUT
+    return getter()
 
 
 def run_responder(args) -> None:
@@ -146,7 +158,7 @@ def run_sender(args) -> None:
 
     path_timeout = time.time() + max(
         DEFAULT_TIMEOUT + reticulum.get_first_hop_timeout(destination_hash),
-        reticulum.get_medium_path_timeout(),
+        medium_path_timeout(reticulum),
     )
     while not RNS.Transport.has_path(destination_hash) and time.time() < path_timeout:
         time.sleep(0.1)
@@ -197,7 +209,7 @@ def run_sender(args) -> None:
 
             probe_timeout = time.time() + max(
                 DEFAULT_TIMEOUT + reticulum.get_first_hop_timeout(destination_hash),
-                reticulum.get_medium_path_timeout(),
+                medium_path_timeout(reticulum),
             )
             while receipt.status == RNS.PacketReceipt.SENT and time.time() < probe_timeout:
                 time.sleep(0.05)

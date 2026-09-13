@@ -858,6 +858,18 @@ class MeshCore_Dynamic_Interface(Interface):
     _SENT_FRAGMENTS_MAX_KEYS = 512
     _SENT_FRAGMENTS_TTL_S    = 300.0
 
+    # Cap and TTL for _pending_proof_targets (see
+    # _compute_truncated_packet_hash / _deliver_reassembled_packet /
+    # _resolve_outgoing_route). Reachable by any RF source whose packet
+    # gets reassembled here -- reassembly happens before RNSBIND is
+    # required -- same defense-in-depth reasoning as _SEEN_PKTS_MAX_KEYS.
+    # The TTL just needs to comfortably outlast the slowest realistic gap
+    # between delivering a packet and RNS core handing this interface the
+    # resulting PROOF to send: field-tested one-way delivery over a real
+    # multi-hop repeater path took up to ~60s, so this is double that.
+    _PENDING_PROOF_TARGETS_MAX_KEYS = 256
+    _PENDING_PROOF_TARGETS_TTL_S    = 120.0
+
     # Window after sending a CHANNEL packet's first fragment to watch for
     # a flood_rx counter bump (see _check_heard_repeats) -- long enough to
     # span typical repeater rebroadcast jitter (firmware randomizes flood
@@ -1497,6 +1509,18 @@ class MeshCore_Dynamic_Interface(Interface):
         self._path_response_pending = {}
         self._path_response_pending_lock = threading.Lock()
 
+        # truncated_packet_hash -> (mc_key, monotonic_expiry). A PROOF
+        # packet's own destination-hash field IS the truncated hash of the
+        # packet it's proving (verified against RNS.Packet.get_hash /
+        # ProofDestination) -- see _compute_truncated_packet_hash. Recording
+        # that hash -> sender's MeshCore key here, the moment we deliver the
+        # original packet, lets _resolve_outgoing_route route the resulting
+        # PROOF DIRECT to the same peer even though a PROOF's per-packet
+        # destination can never be pre-bound in _rns_to_mc_map the way a
+        # Link's stable ephemeral ID can. See changelog.md.
+        self._pending_proof_targets = {}
+        self._pending_proof_targets_lock = threading.Lock()
+
         self._has_direct_api    = False
         self._pending_resp_task = None
 
@@ -1756,6 +1780,7 @@ class MeshCore_Dynamic_Interface(Interface):
         await self._setup_configure_channel()
         await self._setup_detect_direct_api()
         await self._load_peer_cache()
+        await self._setup_apply_forced_direct_path()
         await self._setup_configure_telemetry_permissions()
         self._setup_subscribe_contact_and_message_events(ET)
         self._setup_subscribe_lifecycle_events(ET)
@@ -2104,6 +2129,49 @@ class MeshCore_Dynamic_Interface(Interface):
             self._debug(
                 f"Failed to grant telemetry permission to {mc_pubkey[:16]}...: {exc}"
             )
+
+    async def _setup_apply_forced_direct_path(self) -> None:
+        """If force_direct_path_peer/force_direct_path are configured, try
+        to apply the override immediately against the contact list the
+        initial ensure_contacts() call in _setup_detect_direct_api already
+        fetched, rather than relying solely on _bind_meshcore_contact's
+        reactive hook.
+
+        That reactive hook only fires from a LIVE MeshCore contact-table
+        event (NEW_CONTACT/CONTACTS/CONTACTS_FULL/PATH_UPDATE/ADVERTISEMENT),
+        and those subscriptions aren't wired up until
+        _setup_subscribe_contact_and_message_events, which runs AFTER this
+        step. An already-known, unchanging peer -- exactly the case for a
+        peer restored by _load_peer_cache just above, which registers the
+        binding directly via _register_peer_binding without ever touching
+        _bind_meshcore_contact -- may then never generate a fresh
+        contact-table event for the rest of the session, leaving the
+        override permanently un-applied even though the peer was known
+        the whole time. Confirmed live: a field test session saw
+        force_direct_path sit inert for 6+ minutes against a peer with a
+        stable, previously-cached path, with no error and no indication
+        anything was wrong short of the pinned path simply never taking
+        effect.
+
+        _apply_forced_direct_path itself is idempotent per session (guarded
+        by _forced_path_applied), so this and the reactive hook in
+        _bind_meshcore_contact are safe to both exist -- whichever gets
+        a usable contact first wins, and the other becomes a no-op."""
+        if not self.force_direct_path_peer or self._forced_path_applied or self._mc is None:
+            return
+        try:
+            contact = self._mc.get_contact_by_key_prefix(self.force_direct_path_peer)
+        except Exception:
+            contact = None
+        if contact is None:
+            self._debug(
+                f"force_direct_path_peer {self.force_direct_path_peer}... "
+                f"isn't a known MeshCore contact yet -- will apply once "
+                f"it's seen via a contact-table event instead."
+            )
+            return
+        self._forced_path_applied = True
+        await self._apply_forced_direct_path(contact)
 
     async def _load_peer_cache(self) -> None:
         """Seed _peer_table from a previous session's confirmed RNS
@@ -2985,9 +3053,10 @@ class MeshCore_Dynamic_Interface(Interface):
     async def _cleanup_loop(self):
         """Runs every 30s for the life of the interface: sweeps expired
         state out of the reassembly buffers, dedup cache, peer table,
-        rate-limiter history, and pending-token bookkeeping, so none of it
-        grows unbounded over a long-running session. Each sweep is
-        independent -- see the individual _cleanup_* methods."""
+        rate-limiter history, pending-token bookkeeping, and pending-proof-
+        target correlation, so none of it grows unbounded over a
+        long-running session. Each sweep is independent -- see the
+        individual _cleanup_* methods."""
         while True:
             await asyncio.sleep(30)
             now = time.monotonic()
@@ -2998,6 +3067,7 @@ class MeshCore_Dynamic_Interface(Interface):
             self._cleanup_rate_limiter_history(now)
             self._cleanup_stale_pending_tokens(now)
             self._cleanup_expired_path_response_pending(now)
+            self._cleanup_expired_proof_targets(now)
 
     def _cleanup_stale_reassembly(self, now: float) -> None:
         """Drop incomplete multi-fragment reassembly buffers that have been
@@ -3148,6 +3218,20 @@ class MeshCore_Dynamic_Interface(Interface):
             ]
             for k in stale_prp:
                 del self._path_response_pending[k]
+
+    def _cleanup_expired_proof_targets(self, now: float) -> None:
+        """Drop pending-proof-target entries (see _deliver_reassembled_packet
+        / _resolve_outgoing_route) once their TTL elapses without RNS core
+        ever asking us to send the corresponding PROOF -- most delivered
+        packets are never proved at all (PROVE_ALL is opt-in per
+        destination), so this is the common case, not an error."""
+        with self._pending_proof_targets_lock:
+            stale = [
+                k for k, (_, expiry) in self._pending_proof_targets.items()
+                if now >= expiry
+            ]
+            for k in stale:
+                del self._pending_proof_targets[k]
 
     # -------------------------------------------------------------------------
     # Inbound event handlers
@@ -3810,7 +3894,7 @@ class MeshCore_Dynamic_Interface(Interface):
                     )
 
                 if full_packet[0] & 0x03 == self._RNS_PTYPE_LINK_REQ:
-                    link_id = self._link_id_from_lr_packet(full_packet)
+                    link_id = self._compute_truncated_packet_hash(full_packet)
                     if link_id is not None and link_id not in self._rns_to_mc_map:
                         self._rns_to_mc_map[link_id] = mc_key
                         RNS.log(
@@ -3871,6 +3955,31 @@ class MeshCore_Dynamic_Interface(Interface):
             f"RX -> {rx_mode} from '{sender}'. Reassembled {len(full_packet)}b {ptype_str} packet.",
             RNS.LOG_INFO
         )
+
+        # Record this packet's own truncated hash -> sender's MeshCore key,
+        # so that IF RNS core turns around and asks us to send a PROOF for
+        # it (PROVE_ALL destinations do this for every delivered packet),
+        # _resolve_outgoing_route can route that PROOF DIRECT to the same
+        # peer -- a PROOF's destination-hash field literally IS this hash
+        # (see _compute_truncated_packet_hash), so it can never be
+        # pre-bound in _rns_to_mc_map the way a Link's stable ephemeral ID
+        # can. Cheap to always compute; harmless if never claimed (swept by
+        # _cleanup_expired_proof_targets).
+        with self._peer_lock:
+            mc_key = self._peer_table.get(sender)
+        if mc_key:
+            pkt_hash = self._compute_truncated_packet_hash(full_packet)
+            if pkt_hash is not None:
+                with self._pending_proof_targets_lock:
+                    self._pending_proof_targets[pkt_hash] = (
+                        mc_key, time.monotonic() + self._PENDING_PROOF_TARGETS_TTL_S
+                    )
+                    if len(self._pending_proof_targets) > self._PENDING_PROOF_TARGETS_MAX_KEYS:
+                        trim = list(self._pending_proof_targets.keys())[
+                            : self._PENDING_PROOF_TARGETS_MAX_KEYS // 2
+                        ]
+                        for k in trim:
+                            del self._pending_proof_targets[k]
 
         # An incoming DATA+PLAIN packet is a path request. If Transport
         # owns this destination (or has a cached path to it), it will
@@ -3942,11 +4051,33 @@ class MeshCore_Dynamic_Interface(Interface):
                 return None
             return bytes(data[2:end])
 
-    def _link_id_from_lr_packet(self, raw: bytes):
-        """Derive the ephemeral Link ID from a LINK_REQUEST packet, matching
-        RNS's own hashing so DIRECT routing keeps working for the life of
-        the Link (whose destination field becomes this Link ID post-
-        handshake, rather than the original destination hash)."""
+    def _compute_truncated_packet_hash(self, raw: bytes):
+        """Reproduce RNS.Packet.truncated_packet_hash from raw wire bytes --
+        verified against RNS/Packet.py's get_hashable_part()/get_hash():
+        SHA-256 over (the flags byte's low nibble, i.e. context/transport/
+        destination/packet type only -- hop count and the IFAC/header-type
+        bits are excluded) + (everything after the header, skipping the
+        16-byte transport ID on a HEADER_2/two-address packet), truncated
+        to RNS_DST_LEN (16) bytes. Correct only for a packet with no IFAC
+        applied -- true for this interface, since MeshCore carries none;
+        if IFAC support is ever added here, this needs the same unmasking
+        RNS.Transport.handle_ifac() does first, or it will silently stop
+        matching.
+
+        Two unrelated things both need exactly this value, which is why
+        it's a shared helper rather than duplicated:
+          - A LINK_REQUEST packet's own truncated hash becomes the Link's
+            ephemeral ID for the rest of its life (RNS's own definition),
+            so learning it from the LINK_REQUEST keeps DIRECT routing
+            working for later traffic on that Link -- see
+            _learn_rns_token_binding.
+          - A PROOF packet's destination-hash field literally IS the
+            truncated hash of the packet it's proving (RNS.Packet.
+            ProofDestination) -- see _pending_proof_targets, populated
+            from this same computation on the ORIGINAL (non-proof) packet
+            so the resulting PROOF can be correlated back to the peer it
+            came from.
+        """
         if len(raw) < 2:
             return None
         DST_LEN = self._RNS_DST_LEN
@@ -4129,6 +4260,23 @@ class MeshCore_Dynamic_Interface(Interface):
             else:
                 with self._peer_lock:
                     target_key = self._rns_to_mc_map.get(next_hop_token)
+
+                # A PROOF packet's destination-hash field is never a stable
+                # identity -- it's the truncated hash of the ORIGINAL
+                # packet it's proving (RNS.Packet.ProofDestination), unique
+                # per packet, so it can never land in _rns_to_mc_map like a
+                # Link's reused ephemeral ID does. Fall back to the
+                # peer we recorded when WE delivered that original packet
+                # (see _deliver_reassembled_packet) -- an exact match, not
+                # a heuristic, since the token IS that packet's hash.
+                if not target_key and (data[0] & 0x03) == self._RNS_PTYPE_PROOF:
+                    with self._pending_proof_targets_lock:
+                        entry = self._pending_proof_targets.get(next_hop_token)
+                    if entry is not None:
+                        candidate_key, expiry = entry
+                        if time.monotonic() < expiry:
+                            target_key = candidate_key
+
                 if not target_key:
                     channel_reason = f"No direct route bound for RNS token {next_hop_token.hex()[:8]}"
                 else:

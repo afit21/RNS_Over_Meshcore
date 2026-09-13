@@ -212,6 +212,92 @@ class MaybeResetStalePathSkipsForcedPeerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands.reset_calls, 0)
 
 
+class SetupAppliesForcedPathFromKnownContactsTests(unittest.IsolatedAsyncioTestCase):
+    """Regression test for a real bug found in field testing: a peer
+    restored from _load_peer_cache (or otherwise already known at
+    startup) never passes through _bind_meshcore_contact, so the reactive
+    hook there never gets a chance to apply force_direct_path unless a
+    LIVE contact-table event happens to fire for that peer later.
+    _setup_apply_forced_direct_path must apply it directly from the
+    already-fetched contact list instead of waiting for one."""
+
+    async def test_applies_immediately_when_contact_already_known(self):
+        applied = []
+
+        class MC:
+            def get_contact_by_key_prefix(self, key):
+                return {"public_key": "aabbccddeeff00"}
+
+        stub = types.SimpleNamespace(
+            force_direct_path_peer="aabbcc",
+            _forced_path_applied=False,
+            _mc=MC(),
+            _debug=lambda msg: None,
+        )
+
+        async def fake_apply(contact):
+            applied.append(contact)
+
+        stub._apply_forced_direct_path = fake_apply
+        stub._setup_apply_forced_direct_path = types.MethodType(
+            Interface._setup_apply_forced_direct_path, stub
+        )
+
+        await stub._setup_apply_forced_direct_path()
+        self.assertEqual(len(applied), 1)
+        self.assertTrue(stub._forced_path_applied)
+
+    async def test_noop_when_no_override_configured(self):
+        stub = types.SimpleNamespace(
+            force_direct_path_peer=None,
+            _forced_path_applied=False,
+            _mc=types.SimpleNamespace(),
+            _debug=lambda msg: None,
+        )
+        stub._setup_apply_forced_direct_path = types.MethodType(
+            Interface._setup_apply_forced_direct_path, stub
+        )
+        await stub._setup_apply_forced_direct_path()  # must not raise
+        self.assertFalse(stub._forced_path_applied)
+
+    async def test_leaves_it_for_the_reactive_hook_when_contact_not_yet_known(self):
+        class MC:
+            def get_contact_by_key_prefix(self, key):
+                return None
+
+        stub = types.SimpleNamespace(
+            force_direct_path_peer="aabbcc",
+            _forced_path_applied=False,
+            _mc=MC(),
+            _debug=lambda msg: None,
+        )
+        stub._setup_apply_forced_direct_path = types.MethodType(
+            Interface._setup_apply_forced_direct_path, stub
+        )
+        await stub._setup_apply_forced_direct_path()
+        self.assertFalse(
+            stub._forced_path_applied,
+            "must leave _forced_path_applied False so _bind_meshcore_contact's "
+            "reactive hook still gets a chance once the contact appears",
+        )
+
+    async def test_skips_if_already_applied(self):
+        class MC:
+            def get_contact_by_key_prefix(self, key):
+                raise AssertionError("must not even look up the contact again")
+
+        stub = types.SimpleNamespace(
+            force_direct_path_peer="aabbcc",
+            _forced_path_applied=True,
+            _mc=MC(),
+            _debug=lambda msg: None,
+        )
+        stub._setup_apply_forced_direct_path = types.MethodType(
+            Interface._setup_apply_forced_direct_path, stub
+        )
+        await stub._setup_apply_forced_direct_path()  # must not raise
+
+
 def make_channel_msg_stub(channel_relay_only):
     calls = {"bind": [], "tunnel": []}
 

@@ -179,3 +179,9 @@ referenceprojects/
 # so this also matches any nested CLAUDE.md (e.g. under a subdirectory).
 CLAUDE.md
 CLAUDE.local.md
+
+# SSH key used to reach the laptop node for remote field testing -- never
+# commit either half, even though only the .pub half has actually shown
+# up in this directory so far.
+claudtolaptop
+claudtolaptop.pub

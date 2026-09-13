@@ -82,6 +82,68 @@ with a clear reason rather than silently doing nothing.
   pinned peer, and `_on_channel_msg` dropping/passing CHANNEL traffic
   correctly based on `path_len` and the `channel_relay_only` flag.
 
+### Fixed (found live-testing `force_direct_path` against real repeater hardware)
+
+- **`force_direct_path` silently never applied to an already-known
+  peer**: the override was only ever applied from `_bind_meshcore_contact`,
+  which fires solely on a LIVE MeshCore contact-table event (NEW_CONTACT/
+  CONTACTS/CONTACTS_FULL/PATH_UPDATE/ADVERTISEMENT). A peer restored by
+  `_load_peer_cache` (or otherwise already known before those event
+  subscriptions are even wired up in `_async_setup`) goes through
+  `_register_peer_binding` directly and never touches
+  `_bind_meshcore_contact` -- so if that peer's path never happens to
+  change again during the session, the override sat inert indefinitely,
+  with no error and no log trace, while `out_path` stayed whatever a
+  previous real session had left it at. Confirmed live: 6+ minutes of a
+  field-test session with the pinned peer already known and unchanging.
+  Fix: `_setup_apply_forced_direct_path`, run once during startup right
+  after `_load_peer_cache`, applies the override directly against
+  whatever contact `get_contact_by_key_prefix` already has for
+  `force_direct_path_peer` -- `_bind_meshcore_contact`'s reactive hook
+  stays as a second chance for a peer that isn't known yet at that point.
+- **PROOF-of-delivery replies never used a peer's pinned (or otherwise
+  known-good) DIRECT path**: found immediately after the fix above, once
+  DIRECT sends over a correctly-pinned path were confirmed working
+  (37 sends, 97.3% success, ~3s avg RTT) but an end-to-end delivery-proof
+  probe still only got 1 of 7 proofs back in time, despite the responder
+  actually receiving and auto-proving 6 of the 7. Root cause: DIRECT
+  routing (`_resolve_outgoing_route`) requires the packet's destination-
+  hash bytes to already be a key in `_rns_to_mc_map`, populated by
+  `_learn_rns_token_binding` from observed traffic. That works for a
+  Link (its destination becomes a stable ephemeral ID reused for the
+  Link's whole lifetime, so learning it once helps every later packet),
+  but a PROOF packet's destination-hash field is never a stable identity
+  at all -- per `RNS.Packet.ProofDestination`, it's the truncated hash of
+  the ORIGINAL packet being proved, different for literally every
+  packet, so it can never land in `_rns_to_mc_map` ahead of time. Every
+  `PROVE_ALL`-style delivery receipt for a one-off packet (not just this
+  session's test probes -- any NomadNet/MeshChat message using delivery
+  confirmation) was therefore falling back to CHANNEL regardless of how
+  good the sender's known DIRECT path was, hitting exactly the flood-
+  reliability ceiling prior field tests already documented, for traffic
+  that didn't need to. Fix: `_deliver_reassembled_packet` now also
+  records `truncated_packet_hash -> sender's MeshCore key` in a new
+  short-TTL `_pending_proof_targets` map (120s, swept by the existing
+  30s `_cleanup_loop` alongside the other bounded dicts) the moment it
+  delivers a packet from a known peer; `_resolve_outgoing_route` checks
+  that map, as a fallback behind `_rns_to_mc_map`, when a PROOF's token
+  misses -- an exact match (the token IS that packet's hash), never a
+  heuristic. `_link_id_from_lr_packet` (already computing this same
+  RNS-defined hash for a different reason -- a LINK_REQUEST's own
+  truncated hash becomes its Link's ephemeral ID) is renamed
+  `_compute_truncated_packet_hash` and shared between both uses rather
+  than duplicating the formula. Verified against real `RNS.Packet`
+  objects (not just re-derived independently) that the computed hash
+  matches `packet.truncated_packet_hash` exactly.
+- `tests/test_proof_routing.py`: the hash computation against a real
+  `RNS.Packet`-independent reference implementation (hop-count exclusion,
+  HEADER_2 transport-ID exclusion, too-short-packet handling),
+  `_deliver_reassembled_packet` recording a target only for a known
+  sender, `_resolve_outgoing_route`'s PROOF fallback (matches, expires,
+  falls through when unset, never triggers for a non-PROOF packet, and
+  `_rns_to_mc_map` still wins if both would match), and the cleanup
+  sweep.
+
 ## [alpha-0.1-snapshot2] - 2026-09-12
 
 This release is a direct response to the
