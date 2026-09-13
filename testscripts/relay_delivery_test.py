@@ -152,14 +152,18 @@ def run_sender(args) -> None:
 
     reticulum = RNS.Reticulum(configdir=args.config, loglevel=3 + args.verbose)
 
+    def wait_window() -> float:
+        computed = max(
+            DEFAULT_TIMEOUT + reticulum.get_first_hop_timeout(destination_hash),
+            medium_path_timeout(reticulum),
+        )
+        return max(computed, args.timeout) if args.timeout is not None else computed
+
     if not RNS.Transport.has_path(destination_hash):
         RNS.Transport.request_path(destination_hash)
         print(f"Path to {RNS.prettyhexrep(destination_hash)} requested, waiting...")
 
-    path_timeout = time.time() + max(
-        DEFAULT_TIMEOUT + reticulum.get_first_hop_timeout(destination_hash),
-        medium_path_timeout(reticulum),
-    )
+    path_timeout = time.time() + wait_window()
     while not RNS.Transport.has_path(destination_hash) and time.time() < path_timeout:
         time.sleep(0.1)
 
@@ -207,10 +211,7 @@ def run_sender(args) -> None:
             sent += 1
             send_ts = time.time()
 
-            probe_timeout = time.time() + max(
-                DEFAULT_TIMEOUT + reticulum.get_first_hop_timeout(destination_hash),
-                medium_path_timeout(reticulum),
-            )
+            probe_timeout = time.time() + wait_window()
             while receipt.status == RNS.PacketReceipt.SENT and time.time() < probe_timeout:
                 time.sleep(0.05)
 
@@ -286,6 +287,7 @@ def main() -> None:
     p_sender.add_argument("-w", "--wait", type=float, default=2.0, help="Seconds between probes (default: 2.0)")
     p_sender.add_argument("-s", "--size", type=int, default=DEFAULT_PROBE_SIZE, help=f"Probe payload size in bytes (default: {DEFAULT_PROBE_SIZE})")
     p_sender.add_argument("--csv", default=None, help="Optional path to write per-probe results as CSV")
+    p_sender.add_argument("--timeout", type=float, default=None, help="Minimum seconds to wait for path resolution and each probe's delivery proof, overriding the RNS-computed default -- raise this for genuine multi-hop links, where relay latency (repeater hop time x fragment count x hop count) can comfortably exceed the ~12-20s default. Field-tested finding: a 3-fragment ANNOUNCE took ~30-60s+ to complete a multi-hop round trip that the default timeout was too short to catch, even though delivery ultimately succeeded.")
 
     args = parser.parse_args()
 
