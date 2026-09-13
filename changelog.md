@@ -82,6 +82,103 @@ with a clear reason rather than silently doing nothing.
   pinned peer, and `_on_channel_msg` dropping/passing CHANNEL traffic
   correctly based on `path_len` and the `channel_relay_only` flag.
 
+**`processOutgoing()` call-outcome accounting**, motivated by a "missing
+send" symptom hit during the same live field test session as the
+`force_direct_path`/PROOF-routing fixes above: RNS core appeared, from
+its own logging, to have decided to send or rebroadcast a packet, but
+nothing in this interface's logs showed any trace of that packet ever
+arriving at `processOutgoing()`. A temporary diagnostic added live during
+the session narrowed it down enough to keep testing that day, but wasn't
+enough to root-cause it on the spot, and got reverted rather than kept
+as one-off debug noise. This is the permanent replacement: every
+`processOutgoing()` call is now tallied into exactly one outcome bucket
+(`dropped_offline`, `dropped_rate_limited`, `queued`, or `exception`)
+against a `handed_to_interface` count incremented before any check can
+short-circuit the call, all surfaced in the existing `[STATS]` line
+(`_stats_summary_loop`) behind `debug_logs` like the rest of that
+summary.
+
+- **`_SessionStats.record_outgoing_call_outcome` / `outgoing_call_outcome_counts`**:
+  same dict-of-counters pattern as the existing
+  `record_outgoing_ptype`/`outgoing_packet_type_counts`, keyed by outcome
+  name instead of RNS packet type.
+- **`processOutgoing`/`process_outgoing`**: records `handed_to_interface`
+  as its first statement, then exactly one of `dropped_offline` (the
+  `online` check), `dropped_rate_limited` (either
+  `_rate_limit_announce` or `_rate_limit_path_request`), `queued` (a
+  packet reached `_enqueue_fragments`), or `exception` (the whole body is
+  now wrapped in a `try`/`except` that logs the exception and traceback
+  via `RNS.log(..., RNS.LOG_ERROR)` -- matching the existing
+  `_async_setup` exception-logging convention -- then re-raises, so
+  behavior toward RNS core is unchanged and only the accounting/logging
+  is new).
+- **`_stats_summary_loop`**: a new `[STATS] processOutgoing() call
+  outcomes:` line reporting all four buckets plus a computed
+  `unaccounted` residual (`handed_to_interface` minus the sum of the
+  other four). `unaccounted` is the actionable signal this was built
+  for: nonzero means a call fell through this accounting itself (a bug
+  in this new code, not the original symptom); `handed_to_interface`
+  staying flat across an interval where RNS core is otherwise known to
+  be emitting packets instead points to a gap upstream of this
+  interface (RNS core or the interface alias), which this counter can
+  now rule in or out for the first time.
+- `tests/test_outgoing_call_outcomes.py`: each outcome bucket firing
+  exactly once for its triggering condition (offline, each of the two
+  rate limiters, a normal send, an exception raised partway through),
+  counts accumulating correctly across repeated calls with different
+  outcomes, an exception still propagating to the caller after being
+  counted, and the underlying `_SessionStats` methods in isolation.
+
+**Multi-hop CHANNEL fragment reliability**, motivated by the same live
+field test session: over a genuine multi-hop repeater chain (confirmed
+via `channel_relay_only` and a TX-power sweep to rule out direct-range
+confounds), CHANNEL delivery was bimodal -- a full, fast success or
+nothing at all within 90s, with no clean partial-progress pattern in
+between.
+
+- **`fragment_delay` default raised `1.0s` → `2.5s`** (back towards the
+  pre-fork value it was lowered from -- see the
+  `alpha-0.1-snapshot1`-era "Configuration defaults" entry below, which
+  already flagged this as "intended to be revisited towards a more
+  mesh-considerate value once the build is stable"). A repeater has one
+  radio: it cannot receive fragment N+1 while still relaying fragment N,
+  and the firmware's own per-hop scheduling adds further delay on top of
+  that. At `1.0s`, a multi-fragment packet's later fragments were likely
+  being re-flooded into the mesh (and potentially colliding with an
+  in-progress relay at a repeater) before an earlier fragment had
+  finished propagating across every hop -- consistent with the bimodal
+  pattern observed. This can't be scaled automatically per hop count the
+  way `direct_ack_timeout_routed_max` is for `DIRECT` sends: `CHANNEL` is
+  a flood broadcast with no fixed route, so there's no single hop count
+  to scale against. It stays a flat, manually-tuned value -- lower it for
+  a known single-hop/no-repeater deployment where the extra margin only
+  costs latency.
+- **`path_response_retransmit_extra`** (new, default `1`): a path-response
+  ANNOUNCE (sent because a path request for this destination just came
+  in -- see `_path_response_pending`) is a one-shot, unacknowledged
+  `CHANNEL` broadcast with no retry unlike a `DIRECT` send
+  (`_send_direct_with_retry`). It previously shared
+  `announce_retransmit_extra` (`0` by default, deliberately -- see the
+  `alpha-0.1-snapshot1`-era default change below -- since a spontaneous
+  self-announce nobody's waiting on shouldn't be retried), so in practice
+  it had no retry margin at all: losing it over a lossy multi-hop
+  `CHANNEL` relay just silently expired the requester's path-request
+  timeout, indistinguishable on their end from "no path exists". It now
+  gets its own budget, non-zero by default because (unlike a spontaneous
+  announce) it's narrowly scoped -- `_schedule_extra_retransmits` only
+  applies it when `_rate_limit_announce` identifies the send as
+  demand-driven -- and specifically the case field testing found
+  unreliable. `_rate_limit_announce` now returns `(suppress,
+  is_path_response)` instead of a bare bool so `processOutgoing` can pass
+  that flag through to `_schedule_extra_retransmits`.
+- `tests/test_path_response_retry.py`: `_rate_limit_announce`'s new
+  return shape across every branch (non-announce packet, first announce
+  for a destination, rate-limited, demand-driven bypass, expired pending
+  entry, single-consumption of a pending entry), and
+  `_schedule_extra_retransmits` picking `path_response_retransmit_extra`
+  only when the flag is set (never for an ordinary announce, never for a
+  non-announce packet type, nothing scheduled when the budget is `0`).
+
 ### Fixed (found live-testing `force_direct_path` against real repeater hardware)
 
 - **`force_direct_path` silently never applied to an already-known

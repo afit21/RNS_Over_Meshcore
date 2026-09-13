@@ -133,7 +133,7 @@ Every node needs at minimum a transport block. Channel identity is optional — 
 
     # Fragmentation
     payload_size = 64         # bytes/fragment - see "Payload size" below
-    fragment_delay = 1.0      # seconds between channel-mode fragments
+    fragment_delay = 2.5      # seconds between channel-mode fragments
     direct_frag_delay = 0.5   # seconds between direct-message fragments
     fragment_timeout = 300    # 5-minute reassembly window for high-latency meshes
 
@@ -273,7 +273,7 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `channel_secret` | *(shared default)* | MeshCore channel encryption key (32 hex chars). Sharing the default isn't an RNS security concern — see [Configuration](#configuration) — but set your own for a private channel. |
 | `payload_size` | `64` | Fragment payload size in bytes; see [Payload size](#payload-size) |
 | `firmware_text_limit` | `160` | MeshCore firmware's per-message character ceiling, used to auto-size `payload_size`; lower it only if your specific firmware/BLE combination needs it — see [Payload size](#payload-size) |
-| `fragment_delay` | `1.0` | Seconds between channel-mode fragments |
+| `fragment_delay` | `2.5` | Seconds between channel-mode fragments. Raised from an earlier `1.0` after multi-hop field testing showed a later fragment could be re-flooded (and collide at a repeater) before an earlier one finished propagating across every hop; lower it back towards `1.0` for a known single-hop/no-repeater deployment where the extra margin only costs latency |
 | `direct_frag_delay` | `0.5` | Seconds between direct-message fragments |
 | `fragment_timeout` | `300` | Reassembly window for incomplete multi-fragment packets |
 | `direct_ack_timeout` | `4.0` | Minimum wait for a direct-send delivery ACK |
@@ -292,6 +292,11 @@ Direct and channel traffic are queued and processed independently (`_direct_outq
 | `contact_refresh_interval` | `30.0` | Seconds between periodic re-fetches of MeshCore's contact list, so cached path info doesn't go stale between events (local query only, no mesh airtime cost) |
 | `outgoing_announce_rate` | `600` | Minimum seconds between announces per destination (`0` disables) |
 | `outgoing_path_req_rate` | `1800` | Minimum seconds between path requests per destination (`0` disables) |
+| `announce_retransmit_extra` | `0` | Extra best-effort resends of a spontaneous (non-path-response) announce, unacknowledged CHANNEL fragments jittered `retransmit_jitter_min`-`retransmit_jitter_max` apart. Off by default — nothing is waiting on a spontaneous announce, so retrying it is pure mesh airtime |
+| `path_response_retransmit_extra` | `1` | Extra resends specifically for an announce sent in response to an inbound path request — a one-shot CHANNEL broadcast a peer's path request is actively blocked on, with no ACK and no fallback the way a direct send gets. Non-zero by default: found unreliable over a multi-hop repeater chain in field testing, and narrowly scoped (only fires when demand-driven) |
+| `path_req_retransmit_extra` | `0` | Extra resends of an outgoing path request. Off by default — RNS's own Transport layer already retries a path request several times on its own |
+| `ordinary_data_retransmit_extra` | `0` | Extra resends of an ordinary data packet that had no bound peer/resolved route and fell back to unacknowledged `CHANNEL`. Never applies to a `DIRECT` send — that's already ACK'd by the firmware |
+| `retransmit_jitter_min` / `retransmit_jitter_max` | `8.0` / `20.0` | Random delay range, in seconds, before each extra retransmit pass above |
 | `rate_limit` | `0` | Optional hard bandwidth cap in bits/second (`0` disables) |
 | `allow_direct` | `yes` | Use unicast direct messages when a route to the peer is known |
 | `peer_ttl` | `86400` | Seconds before a silent peer is dropped from the peer table |

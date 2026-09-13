@@ -514,6 +514,17 @@ class _SessionStats:
         # a bare send/fail total can't.
         self._outgoing_ptype_counts = {}   # ptype name -> count
 
+        # Per-call outcome of processOutgoing() -- see
+        # record_outgoing_call_outcome() and the "missing send" investigation
+        # in changelog.md. "handed_to_interface" is incremented as the very
+        # first thing processOutgoing() does, before any check can bail out,
+        # so (handed_to_interface - dropped_offline - dropped_rate_limited -
+        # queued - exception) is the count of calls that entered the function
+        # but didn't fall into any *known* outcome bucket -- i.e. a gap in
+        # this accounting itself, surfaced as "unaccounted" in [STATS] rather
+        # than silently vanishing the way the original symptom did.
+        self._outgoing_outcome_counts = {}   # outcome name -> count
+
         # Point-in-time routing-health data pushed in from the interface
         # (which owns the underlying lock/queues/counters) rather than
         # computed here -- mirrors mesh_utilization above. See
@@ -610,6 +621,15 @@ class _SessionStats:
         with self._lock:
             self._outgoing_ptype_counts[ptype_name] = (
                 self._outgoing_ptype_counts.get(ptype_name, 0) + 1
+            )
+
+    def record_outgoing_call_outcome(self, outcome: str) -> None:
+        """Tally what happened to one processOutgoing() call -- see the
+        _outgoing_outcome_counts field docstring above for why this exists
+        and how "unaccounted" is derived from it."""
+        with self._lock:
+            self._outgoing_outcome_counts[outcome] = (
+                self._outgoing_outcome_counts.get(outcome, 0) + 1
             )
 
     def set_routing_health(self, data: dict) -> None:
@@ -711,6 +731,7 @@ class _SessionStats:
             rx_bytes    = self.rx_bytes_total
             mesh_util   = self.mesh_utilization
             ptype_counts = dict(self._outgoing_ptype_counts)
+            outcome_counts = dict(self._outgoing_outcome_counts)
             routing_health = self.routing_health
         return {
             "uptime_s": uptime,
@@ -730,6 +751,7 @@ class _SessionStats:
             "meshcore_latency": self.get_meshcore_latency(),
             "meshcore_latency_by_peer": self.get_meshcore_latency_by_peer(),
             "outgoing_packet_type_counts": ptype_counts,
+            "outgoing_call_outcome_counts": outcome_counts,
             "routing_health": routing_health,
         }
 
@@ -989,7 +1011,23 @@ class MeshCore_Dynamic_Interface(Interface):
         # Pacing between CHANNEL (broadcast) fragments of the same packet --
         # this one does cost shared mesh airtime, so it's the one to relax
         # again once we're past the performance-focused development phase.
-        self.fragment_delay_s = float(cfg.get("fragment_delay", 1.0))
+        # Was 1.0s during that phase; raised back towards the pre-fork
+        # value (2.5s) after live multi-hop field testing showed CHANNEL
+        # packet delivery over a repeater chain was bimodal -- either a
+        # quick full success or no response at all within 90s, consistent
+        # with a later fragment being re-flooded into the mesh (and
+        # potentially colliding at a repeater) before an earlier one has
+        # finished propagating across every hop. A repeater only has one
+        # radio, so it can't receive fragment N+1 while still relaying
+        # fragment N; 1.0s doesn't leave much margin once you add the
+        # firmware's own per-hop scheduling delay on top of that. This
+        # can't be scaled automatically per hop the way DIRECT's ACK
+        # ceiling is (_direct_ack_timeout_max_s) -- CHANNEL is a flood
+        # broadcast with no fixed route, so there's no single hop count to
+        # scale against -- so it stays a flat, manually-tuned value; lower
+        # it back towards 1.0s for a known single-hop/no-repeater
+        # deployment where the extra margin only costs latency.
+        self.fragment_delay_s = float(cfg.get("fragment_delay", 2.5))
 
         raw_dfd = cfg.get("direct_frag_delay", None)
         self.direct_frag_delay_s = float(raw_dfd) if raw_dfd is not None else 0.5
@@ -1145,6 +1183,24 @@ class MeshCore_Dynamic_Interface(Interface):
         self.retransmit_jitter_min_s   = float(cfg.get("retransmit_jitter_min", 8.0))
         self.retransmit_jitter_max_s   = float(cfg.get("retransmit_jitter_max", 20.0))
         self.ordinary_data_retransmit_extra = int(cfg.get("ordinary_data_retransmit_extra", 0))
+
+        # A path-RESPONSE (an ANNOUNCE sent because a path request for this
+        # destination just came in -- see _path_response_pending) gets its
+        # own retry budget rather than sharing announce_retransmit_extra
+        # above. It's not a spontaneous re-announce nobody's waiting on --
+        # a specific peer's path request is blocked on exactly this one
+        # CHANNEL broadcast landing, with no ACK and no fallback the way a
+        # DIRECT send gets. Found live over a multi-hop repeater chain:
+        # losing this one fragment set silently expires the requester's
+        # path-request timeout, indistinguishable from "no path exists" on
+        # their end. Defaults to 1 extra attempt -- non-zero (unlike the
+        # announce/path-request defaults above) because this case is both
+        # narrowly scoped (fires only when demand-driven, per
+        # _rate_limit_announce) and specifically the one field-tested as
+        # unreliable, rather than a blanket always-on retry.
+        self.path_response_retransmit_extra = int(
+            cfg.get("path_response_retransmit_extra", 1)
+        )
 
     def _configure_stale_fragment_dropping(self, cfg) -> None:
         """When to give up on and drop an outgoing fragment instead of
@@ -2672,6 +2728,29 @@ class MeshCore_Dynamic_Interface(Interface):
                 f"outgoing packet-type mix: {ptype_str}"
             )
 
+            # See processOutgoing()'s docstring for what this is tracking
+            # and why: a nonzero "unaccounted" means a processOutgoing()
+            # call fell through every known outcome bucket (a bug in that
+            # accounting itself), while handed_to_interface staying flat
+            # despite RNS core being known to be emitting packets points to
+            # a gap upstream of this interface instead.
+            outcomes = s["outgoing_call_outcome_counts"]
+            handed   = outcomes.get("handed_to_interface", 0)
+            accounted = sum(
+                outcomes.get(k, 0)
+                for k in ("dropped_offline", "dropped_rate_limited", "queued", "exception")
+            )
+            unaccounted = handed - accounted
+            self._debug(
+                f"[STATS] processOutgoing() call outcomes: "
+                f"handed_to_interface={handed} "
+                f"queued={outcomes.get('queued', 0)} "
+                f"dropped_offline={outcomes.get('dropped_offline', 0)} "
+                f"dropped_rate_limited={outcomes.get('dropped_rate_limited', 0)} "
+                f"exception={outcomes.get('exception', 0)} "
+                f"unaccounted={unaccounted}"
+            )
+
     async def _bind_discovery_loop(self):
         """Periodically broadcast RNSBIND_REQ while we have no known peers,
         then settle into a slower RNSBIND heartbeat once we do, so peers can
@@ -4099,69 +4178,114 @@ class MeshCore_Dynamic_Interface(Interface):
         """RNS-facing entry point for a packet leaving this interface:
         applies announce/path-request rate limiting, picks DIRECT vs
         CHANNEL routing, fragments/encodes the packet, enqueues each
-        fragment, and schedules any extra best-effort retransmits."""
-        if not self.online:
-            return
+        fragment, and schedules any extra best-effort retransmits.
 
-        hdr_byte  = data[0] if data else 0
-        ptype     = hdr_byte & 0x03
-        dest_type = (hdr_byte >> 2) & 0x03
+        Every call is tallied into stats.outgoing_call_outcome_counts under
+        exactly one outcome bucket ("dropped_offline", "dropped_rate_limited",
+        "queued", or "exception"), against a "handed_to_interface" count
+        incremented before any of those checks can run. This exists because
+        field testing turned up a "missing send" symptom -- RNS core
+        apparently deciding to send/rebroadcast a packet with no matching
+        entry anywhere in this interface's own logs -- that couldn't be
+        root-caused live. (handed_to_interface - every other bucket) is
+        reported as "unaccounted" in [STATS]; a nonzero value there means
+        a call fell through this accounting itself (a bug in this function),
+        while handed_to_interface staying flat while RNS core is known to be
+        emitting packets would instead point upstream, above this interface.
+        """
+        self.stats.record_outgoing_call_outcome("handed_to_interface")
+        try:
+            if not self.online:
+                self.stats.record_outgoing_call_outcome("dropped_offline")
+                return
 
-        # Cheap to compute (ptype is already extracted above for the rate
-        # limiters below) -- distinguishes "lots of retries because of
-        # bulk data" from "lots of retries because of an announce storm"
-        # in the stats snapshot, which a bare send/fail counter can't.
-        self.stats.record_outgoing_ptype(self._PTYPE_NAMES.get(ptype, "UNKNOWN"))
+            hdr_byte  = data[0] if data else 0
+            ptype     = hdr_byte & 0x03
+            dest_type = (hdr_byte >> 2) & 0x03
 
-        if self._rate_limit_announce(data, ptype):
-            return
-        if self._rate_limit_path_request(data, ptype, dest_type):
-            return
+            # Cheap to compute (ptype is already extracted above for the rate
+            # limiters below) -- distinguishes "lots of retries because of
+            # bulk data" from "lots of retries because of an announce storm"
+            # in the stats snapshot, which a bare send/fail counter can't.
+            self.stats.record_outgoing_ptype(self._PTYPE_NAMES.get(ptype, "UNKNOWN"))
 
-        with self._pkt_id_lock:
-            pkt_id       = self._pkt_id
-            self._pkt_id = (self._pkt_id + 1) & 0xFFFFFFFF  # 32-bit bound integer tracking
+            suppress_announce, is_path_response_announce = self._rate_limit_announce(data, ptype)
+            if suppress_announce:
+                self.stats.record_outgoing_call_outcome("dropped_rate_limited")
+                return
+            if self._rate_limit_path_request(data, ptype, dest_type):
+                self.stats.record_outgoing_call_outcome("dropped_rate_limited")
+                return
 
-        handler   = _PacketHandler(data, pkt_id, self._auto_payload_size())
-        self._register_pkt_send(pkt_id, len(handler.fragments))
+            with self._pkt_id_lock:
+                pkt_id       = self._pkt_id
+                self._pkt_id = (self._pkt_id + 1) & 0xFFFFFFFF  # 32-bit bound integer tracking
 
-        broadcast = self._is_broadcast_packet(data)
+            handler   = _PacketHandler(data, pkt_id, self._auto_payload_size())
+            self._register_pkt_send(pkt_id, len(handler.fragments))
 
-        #Log Fragmentation Performance Metrics
-        RNS.log(
-            f"[PERF {pkt_id}] OUT "
-            f"size={len(data)} "
-            f"ptype={ptype} "
-            f"broadcast={broadcast}",
-            RNS.LOG_INFO
-        )
+            broadcast = self._is_broadcast_packet(data)
 
-        route = self._resolve_outgoing_route(data, broadcast)
-        mode, target = route[0]
-        priority = (
-            self._PRIORITY_HANDSHAKE
-            if ptype in (self._RNS_PTYPE_LINK_REQ, self._RNS_PTYPE_PROOF)
-            else self._PRIORITY_NORMAL
-        )
+            #Log Fragmentation Performance Metrics
+            RNS.log(
+                f"[PERF {pkt_id}] OUT "
+                f"size={len(data)} "
+                f"ptype={ptype} "
+                f"broadcast={broadcast}",
+                RNS.LOG_INFO
+            )
 
-        self._enqueue_fragments(handler, mode, target, priority, pkt_id, broadcast)
-        self._schedule_extra_retransmits(handler, route, ptype, dest_type, broadcast, priority)
+            route = self._resolve_outgoing_route(data, broadcast)
+            mode, target = route[0]
+            priority = (
+                self._PRIORITY_HANDSHAKE
+                if ptype in (self._RNS_PTYPE_LINK_REQ, self._RNS_PTYPE_PROOF)
+                else self._PRIORITY_NORMAL
+            )
 
-        self.txb += len(data)
-        self.stats.record_tx_bytes(len(data))
+            self._enqueue_fragments(handler, mode, target, priority, pkt_id, broadcast)
+            self._schedule_extra_retransmits(
+                handler, route, ptype, dest_type, broadcast, priority,
+                is_path_response_announce,
+            )
 
-    def _rate_limit_announce(self, data: bytes, ptype: int) -> bool:
+            self.txb += len(data)
+            self.stats.record_tx_bytes(len(data))
+            self.stats.record_outgoing_call_outcome("queued")
+        except Exception as exc:
+            self.stats.record_outgoing_call_outcome("exception")
+            import traceback
+            RNS.log(
+                f"MeshCore_Dynamic_Interface [{self.name}]: "
+                f"processOutgoing exception: {exc}", RNS.LOG_ERROR
+            )
+            RNS.log(
+                "".join(traceback.format_exception(
+                    type(exc), exc, exc.__traceback__
+                )),
+                RNS.LOG_ERROR
+            )
+            raise
+
+    def _rate_limit_announce(self, data: bytes, ptype: int) -> tuple:
         """Per-destination outgoing announce rate limiter. Bypassed for
         announces answering a path request we recently saw come in for this
         same destination (see _path_response_pending) -- those are demand-
         driven responses, not spontaneous re-announces, and dropping them
         silently is what causes intermittent "path request timed out"
         failures on the requesting side when a routine self-announce
-        happened to go out shortly beforehand. Returns True if the announce
-        should be suppressed."""
+        happened to go out shortly beforehand.
+
+        Returns (suppress, is_path_response): suppress is True if the
+        announce should be dropped; is_path_response tells the caller
+        whether this announce is one of those demand-driven responses, so
+        it can be routed to its own retry budget
+        (path_response_retransmit_extra) in _schedule_extra_retransmits
+        rather than the one for spontaneous self-announces
+        (announce_retransmit_extra, 0 by default)."""
         if not (self._announce_rate_s > 0 and len(data) >= 2 + self._RNS_DST_LEN
                 and ptype == self._RNS_PTYPE_ANNOUNCE):
-            return False
+            return False, False
 
         # Full 16-byte destination hash (_RNS_DST_LEN), matching
         # _extract_rns_token -- previously only the first 10 bytes, which
@@ -4187,7 +4311,7 @@ class MeshCore_Dynamic_Interface(Interface):
                         f"since last (< {self._announce_rate_s:.0f}s limit).",
                         RNS.LOG_INFO
                     )
-                    return True
+                    return True, False
         else:
             RNS.log(
                 f"MeshCore_Dynamic_Interface [{self.name}]: "
@@ -4198,7 +4322,7 @@ class MeshCore_Dynamic_Interface(Interface):
 
         with self._announce_sent_lock:
             self._announce_sent_times[dest_id] = now
-        return False
+        return False, answering_path_request
 
     def _rate_limit_path_request(self, data: bytes, ptype: int, dest_type: int) -> bool:
         """Per-destination outgoing path request rate limiter, with a burst
@@ -4371,7 +4495,10 @@ class MeshCore_Dynamic_Interface(Interface):
             except Exception:
                 pass
 
-    def _schedule_extra_retransmits(self, handler, route, ptype, dest_type, broadcast, priority) -> None:
+    def _schedule_extra_retransmits(
+        self, handler, route, ptype, dest_type, broadcast, priority,
+        is_path_response_announce: bool = False,
+    ) -> None:
         """Kick off _delayed_retransmits for packet types that benefit from
         unacknowledged best-effort duplication (announces, path requests,
         and ordinary data that fell back to CHANNEL) -- a no-op for
@@ -4379,18 +4506,29 @@ class MeshCore_Dynamic_Interface(Interface):
 
         Path RESPONSES aren't a distinct packet type in this system --
         they're just an ANNOUNCE that happened to be triggered by an
-        inbound path request (see _path_response_pending) -- so they're
-        already covered by the announce_retransmit_extra branch below with
-        no separate handling needed. ordinary_data_retransmit_extra only
-        makes sense for non-broadcast packets that ended up on the
-        unacknowledged CHANNEL path (e.g. no bound peer / no resolved route
-        yet); a DIRECT send is already ACK'd by the firmware (see
+        inbound path request (see _path_response_pending). They get their
+        own retry budget, path_response_retransmit_extra, instead of
+        sharing announce_retransmit_extra (0 by default): a spontaneous
+        self-announce has no one waiting on it, so retrying it is pure
+        wasted airtime, but a path response is a one-shot CHANNEL
+        broadcast a specific peer's path request is actively blocked on,
+        with no ACK and no fallback the way a DIRECT send gets
+        (_send_direct_with_retry) -- field testing found exactly this: a
+        lost path-response ANNOUNCE over a multi-hop CHANNEL relay just
+        silently expired the requester's path-request timeout, with
+        nothing on this end to notice or recover. ordinary_data_retransmit_
+        extra only makes sense for non-broadcast packets that ended up on
+        the unacknowledged CHANNEL path (e.g. no bound peer / no resolved
+        route yet); a DIRECT send is already ACK'd by the firmware (see
         _async_outgoing_worker), so blindly retransmitting it too would
         just double-deliver a packet that's already confirmed received."""
         retransmit_extra = 0
         if broadcast:
             if ptype == self._RNS_PTYPE_ANNOUNCE:
-                retransmit_extra = self.announce_retransmit_extra
+                retransmit_extra = (
+                    self.path_response_retransmit_extra if is_path_response_announce
+                    else self.announce_retransmit_extra
+                )
             elif ptype == self._RNS_PTYPE_DATA and dest_type == self._RNS_DTYPE_PLAIN:
                 retransmit_extra = self.path_req_retransmit_extra
         elif route[0][0] == "channel":
