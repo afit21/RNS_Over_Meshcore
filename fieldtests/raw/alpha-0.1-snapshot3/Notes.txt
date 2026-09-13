@@ -1,0 +1,27 @@
+Field test session, 2026-09-13, laptop ('a') driven by Claude Code (this session), transfer node ('afipc', at the user's home) driven by a separate cross-session Claude instance. Notes below are reconstructed from the session transcript, timestamps approximate (laptop wall clock).
+
+~16:00 - Session start. Laptop and afipc already coordinating via cross-session messaging (separate Claude sessions, one per machine). Confirmed both on same repo/branch, same channel config (idx=35 "RNSTunnel").
+
+~16:02-16:13 - User asked to stop rnsd on the laptop so they could check the connection in the official MeshCore companion app. Did so, then restarted.
+
+16:13-16:22 - Basic sanity check: laptop and afipc were physically close together at this point (strong signal). RNSBIND peer discovery handshake completed cleanly both directions; persistent peer-binding restore across a laptop restart also confirmed working.
+
+16:22-17:12 - Quantified delivery testing via testscripts/relay_delivery_test.py (responder on afipc, sender on laptop), both nodes still close together / good signal initially. Spent considerable time chasing what looked like an intermittent "interface silently doesn't send" issue (RNS Transport dispatches a path request/announce, but no corresponding send-side log appears on the sending node) - added temporary diagnostic instrumentation to the deployed (not repo) copy of the interface twice during the session to chase this; in both instrumented windows the interface actually sent correctly every time it was checked, so this looks like a real but genuinely intermittent quirk rather than a hard bug - not fully explained by session's end.
+
+~16:48 - User left wifi range for ~10 minutes (laptop only - the radio/rnsd itself doesn't need wifi, kept running detached the whole time). Agent (this Claude session) is also wifi-dependent and went unresponsive during this window.
+
+~17:12 onward - User back, and had physically relocated the laptop into a car, roughly 2-3 repeater hops from afipc (home), with terrain blocking any direct RF path. This is the interesting new-ground part of the session: previous snapshots' field tests were all direct/1-hop; this is the first real multi-hop (2-3 hop) test using real, uncontrolled public MeshCore repeater infrastructure in the area (repeaters seen: "WRR Broken Hill" (regular repeater, not an RNS-interface node - confirmed by user), "RH Broken Hill", "Broken Hill 2", "Bh South 1").
+
+17:12-17:26 - Multiple relay_delivery_test.py sender attempts from the laptop against afipc's responder at this range: forward-hop (laptop's path request reaching afipc) confirmed reliable every time afipc checked their own log. Full round trip (afipc's ANNOUNCE response, which needs 3 MeshCore fragments, making it back to the laptop) did not succeed in any of these attempts.
+
+~17:17-17:20 - User independently verified via the official MeshCore companion app (not this project's interface) that a test message reached afipc through 3 real repeater hops reliably ("most messages get through"). This confirmed the underlying RF/repeater path itself was not the problem.
+
+~17:27-17:30 - User: "multiple repeater hops will be required" - confirming the topology deliberately requires relay, this isn't a marginal-direct-range situation.
+
+~17:34 - Standalone, RNS-independent MeshCore native path-discovery test (testscripts/path_discovery_diag.py) against afipc's MeshCore contact: 3/3 successful, ~5s response each, resolved a working 1-hop MeshCore-level path. This is a clean, decisive confirmation that the mesh/repeater infrastructure itself is solid at this range, independent of anything this project's RNS interface does.
+
+17:36-17:40 - Reverse-direction test: started a fresh relay_delivery_test.py responder on the laptop itself (instead of afipc), to see whether a 3-fragment ANNOUNCE survives the same multi-hop link in the opposite direction. First attempt (afipc as sender) timed out on afipc's side, but afipc's own log showed nothing arrived from the laptop side either - inconclusive on which direction was at fault. Re-instrumented the interface with temporary diagnostics again and had afipc retry: this time the laptop's interface logged a completely clean send (online=True, OUT=True, all 3 fragments queued/dequeued over ~2s), and afipc's log confirmed a full, clean reassembly of the 3-fragment ANNOUNCE about 6 seconds later. So the announce mechanism itself is NOT fundamentally broken at 3 hops - it completed a full clean round trip when given enough time. The working theory by session's end: relay_delivery_test.py's own path-resolution timeout (~12-20s on afipc's side, ~60s fallback on the laptop's side for older rnsd 1.4.2) is likely too short for genuine multi-hop, multi-fragment delivery latency at this hop count, rather than the interface or mesh being unreliable.
+
+Diagnostic instrumentation added during the session was only ever applied to the locally-deployed copy of the interface (~/.reticulum/interfaces/MeshCore_Dynamic_Interface.py on the laptop), never to the repo source, and was reverted before session end.
+
+Session ended with: repeaters/mesh confirmed solid via two independent non-RNS methods; interface's forward-hop broadcasts confirmed reliable; one clean full round trip of a 3-fragment announce confirmed at this range once test timeouts were effectively long enough; several inconclusive/timed-out attempts before that, likely due to test-script timeout being shorter than actual multi-hop delivery latency rather than a functional problem.

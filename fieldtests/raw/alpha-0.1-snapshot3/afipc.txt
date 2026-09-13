@@ -1,0 +1,72 @@
+NOTE: this file is a filtered excerpt (STATS/QUEUE/DEQUEUE lines stripped,
+per-minute noise reduced) pasted by the afipc-side Claude session via
+cross-session chat, not a raw file transferred/read directly by the
+laptop-side session that compiled this snapshot's report. The afipc
+session offered to paste the full unfiltered version on request; this is
+what was actually provided and used.
+
+Covers afipc's rnsd session from 16:07:17 (when this session began
+coordinating with the laptop) through the end of testing.
+
+[2026-09-13 16:07:17] [Notice]   Loading external interface "MeshCore_Dynamic_Interface.py" from "/home/afi/.reticulum/interfaces"
+INFO:meshcore:Serial Connection started
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Connected to MeshCore device (serial port=/dev/ttyUSB0 baudrate=115200).
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Node identity: 'afipc' key=7bd024b5d082747e... [router]
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Channel configured: idx=35 name='RNSTunnel'.
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Initial contact fetch OK (10 contact(s) known).
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'a' -> 343377c464a79a48... [capability unknown]
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'WRR Broken Hill.' -> d688908d71f97278... [capability unknown]
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Bound peer 'RH Broken Hill' -> be36bdc9c3f7f5ba... [capability unknown]
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Restored 3 peer binding(s) from a previous session (still confirmed present in the MeshCore device's own contact table).
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: telemetry_mode_base set to ALLOW_FLAGS.
+[2026-09-13 16:07:17] [Info]     MeshCore_Dynamic_Interface [MeshCore Dynamic Interface]: Interface ready -- transport=serial can_route=True allow_direct=True direct_api=True payload_size=64 peer_ttl=86400s auto_reconnect=True(3 attempts) debug_logs=True.
+[2026-09-13 16:07:18] [Notice]   Started rnsd version 1.5.2
+[2026-09-13 16:07:22] [Info]     Startup announcement — sending RNSBIND_REQ (attempt 1/3, cap=R)
+[2026-09-13 16:07:37] [Info]     Bound peer 'a' -> 343377c464a79a48... [edge — no upstream routing]
+[2026-09-13 16:07:37] [Info]     Peer 'a' -> 343377c464a79a48... [edge — no upstream routing]
+[2026-09-13 16:08:22] [Info]     Startup announcement — sending RNSBIND_REQ (attempt 2/3, cap=R)
+[2026-09-13 16:09:22] [Info]     Startup announcement — sending RNSBIND_REQ (attempt 3/3, cap=R)
+[2026-09-13 16:10:22] [Info]     Sent RNSBIND heartbeat [cap=R] (next in 3600s).
+[2026-09-13 16:11:51] [Info]     Sent RNSBIND response [cap=R] after 7.9s backoff.
+[2026-09-13 16:12:51] [Info]     Sent RNSBIND response [cap=R] after 7.6s backoff.
+[2026-09-13 16:13:40] [Info]     Sent RNSBIND response [cap=R] after 4.0s backoff.
+[2026-09-13 16:14:46] [Info]     Sent RNSBIND response [cap=R] after 10.9s backoff.
+[2026-09-13 16:18:36] [Info]     Path for be36bdc9c3f7f5ba... changed: None -> out_path_len=2 out_path=19d6.
+[2026-09-13 16:22:34] [Info]     Sent RNSBIND response [cap=R] after 10.7s backoff.
+[2026-09-13 16:23:01] [Info]     Linked RNS token 6b9f6601 -> 'a'
+[2026-09-13 16:23:01] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet.
+[2026-09-13 16:23:02] [Info]     [PERF 0] OUT size=183 ptype=1 broadcast=True
+[2026-09-13 16:23:02] [Info]     Routing -> CHANNEL. Reason: Mandatory broadcast packet (e.g., Announce)
+[2026-09-13 16:23:08] [Info]     Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=0 (3 fragment(s))
+[2026-09-13 16:23:28] [Info]     Sent RNSBIND response [cap=R] after 3.3s backoff.
+[2026-09-13 16:24:34] [Info]     Sent RNSBIND response [cap=R] after 9.4s backoff.
+[2026-09-13 16:31:24] [Info]     Bound peer 'Broken Hill 2' -> 4f81da584a557973... [capability unknown]
+[2026-09-13 16:36:10] [Info]     Path for 194aec24d64c0565... changed: None -> out_path_len=0 out_path=. / Bound peer 'Bh South 1' -> 194aec24d64c0565...
+[2026-09-13 16:43:42] [Info]     [PERF 1] OUT size=83 ptype=2 broadcast=False / Routing -> CHANNEL. Reason: No direct route bound for RNS token 8713640f
+[2026-09-13 16:44:06] [Info]     [PERF 2] OUT size=67 ptype=0 broadcast=True / Routing -> CHANNEL. Reason: Mandatory broadcast packet
+[2026-09-13 16:53:54] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet.
+[2026-09-13 16:53:55] [Info]     [PERF 3] OUT size=183 ptype=1 broadcast=True / Routing -> CHANNEL. Reason: Mandatory broadcast packet
+[2026-09-13 16:54:19] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet.
+[2026-09-13 16:54:20] [Info]     Suppressing outgoing announce for 74a00639 -- 25s since last (< 600s limit).
+[2026-09-13 16:54:50] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet. / Suppressing outgoing announce for 74a00639 -- 55s since last.
+[2026-09-13 17:11:48] [Info]     Path for d688908d71f97278... changed: None -> out_path_len=1 out_path=19.
+[2026-09-13 17:12:10] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet.
+[2026-09-13 17:12:11] [Info]     [PERF 4] OUT size=183 ptype=1 broadcast=True / Routing -> CHANNEL. Reason: Mandatory broadcast packet
+[2026-09-13 17:12:17] [Info]     Heard 2 flood packet(s) on the channel in the 6s after sending pkt_id=4 (3 fragment(s))
+[2026-09-13 17:21:39] [Info]     RX -> CHANNEL from 'a'. Reassembled 51b DATA packet.
+[2026-09-13 17:21:40] [Info]     Suppressing outgoing announce for 74a00639 -- 569s since last (< 600s limit). [different/unrelated dest hash, not the laptop's test destination]
+[2026-09-13 17:37:13] [Info]     [PERF 5] OUT size=67 ptype=0 broadcast=True / Routing -> CHANNEL. Reason: Mandatory broadcast packet
+[2026-09-13 17:40:05] [Info]     Duplicate fragment idx=1 for pkt_id 0 from 'a' ignored (already have it, 2/3 collected). / idx=0 same.
+[2026-09-13 17:40:06] [Info]     Linked RNS token c7ec61a5 -> 'a' / RX -> CHANNEL from 'a'. Reassembled 183b ANNOUNCE packet.
+[2026-09-13 17:40:28] [Info]     Suppressing outgoing path request for 6b9f6601 -- 195s since last (unrelated old token).
+
+(RNSBIND response/heartbeat lines every ~1min throughout are omitted from
+~16:55-17:44 above for brevity -- described by the afipc session as
+"steady, uneventful.")
+
+Additional result reported after this excerpt was sent: a retry of
+relay_delivery_test.py sender (against the laptop's own fresh responder,
+dest c7ec61a5205bdaf291e892b38613033e) using a locally-patched --timeout
+90 (not in the upstream script as of this commit) still did not receive
+a response within 90 seconds. afipc's own PERF log for that specific
+retry attempt was not included in this excerpt.
